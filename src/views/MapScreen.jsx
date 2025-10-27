@@ -1,4 +1,3 @@
-// src/views/MapScreen.jsx
 import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import {
   View,
@@ -16,6 +15,7 @@ import MapView, { Marker } from 'react-native-maps';
 import colors from '../theme/colors';
 import useMapViewModel from '../viewmodels/useMapViewModel';
 import { reverseGeocode } from '../services/locationService';
+import { currentUser } from '../services/authService';
 
 export default function MapScreen({ navigation }) {
   const { loading, incidents } = useMapViewModel();
@@ -25,6 +25,10 @@ export default function MapScreen({ navigation }) {
   // Estado para address on-the-fly si el reporte no lo trae
   const [resolvingAddress, setResolvingAddress] = useState(false);
   const [resolvedAddress, setResolvedAddress] = useState('');
+
+  const me = currentUser();
+  const myEmail = me?.email ?? null;
+  const myName = me?.displayName || (myEmail ? myEmail.split('@')[0] : null);
 
   // Región inicial (usa el primer incidente como referencia o Medellín por defecto)
   const initialRegion = useMemo(
@@ -53,7 +57,6 @@ export default function MapScreen({ navigation }) {
   useEffect(() => {
     const fetchAddress = async () => {
       if (!selected) return;
-      // Si ya trae address desde Firestore, úsala
       if (selected.address) {
         setResolvedAddress(selected.address);
         return;
@@ -108,6 +111,28 @@ export default function MapScreen({ navigation }) {
       </View>
     );
   }
+
+  // Utilidad para mostrar autor “bonito”
+  const renderAuthor = () => {
+    const email = selected?.userEmail || '';
+    const display = selected?.userName || (email ? email.split('@')[0] : null);
+    if (!email && !display) return null;
+    const isMine = myEmail && email && email.toLowerCase() === myEmail.toLowerCase();
+    return (
+      <Text style={[styles.meta, { marginTop: 6 }]}>
+        📍 {isMine ? 'Reportado por ti' : `Reportado por ${display}`}
+      </Text>
+    );
+  };
+
+  // Normaliza fecha por si viene como number o Timestamp
+  const renderDate = () => {
+    const ms =
+      typeof selected?.createdAt === 'number'
+        ? selected.createdAt
+        : selected?.createdAt?.toMillis?.() ?? null;
+    return ms ? new Date(ms).toLocaleString() : '';
+  };
 
   return (
     <View style={styles.container}>
@@ -170,19 +195,11 @@ export default function MapScreen({ navigation }) {
               </Text>
             )}
 
-            {/* Fecha y autor */}
-            <Text style={styles.meta}>
-              {(() => {
-                const ms =
-                  typeof selected?.createdAt === 'number'
-                    ? selected.createdAt
-                    : selected?.createdAt?.toMillis?.() ?? null;
-                return ms ? new Date(ms).toLocaleString() : '';
-              })()}
-            </Text>
-            {!!selected?.userEmail && (
-              <Text style={styles.meta}>Autor: {selected.userEmail}</Text>
-            )}
+            {/* Fecha */}
+            <Text style={styles.meta}>{renderDate()}</Text>
+
+            {/* 🔹 Autor (ti / otro usuario) */}
+            {renderAuthor()}
 
             {/* Acciones */}
             <View style={styles.actionsRow}>
@@ -216,7 +233,7 @@ export default function MapScreen({ navigation }) {
   );
 }
 
-/* Styles */
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },

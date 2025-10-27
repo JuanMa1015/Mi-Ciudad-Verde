@@ -1,4 +1,3 @@
-// src/views/ReportScreen.jsx
 import React from 'react';
 import {
   View,
@@ -41,7 +40,7 @@ export default function ReportScreen({ navigation }) {
     typeof loc.longitude === 'number' &&
     (loc.latitude !== 0 || loc.longitude !== 0);
 
-  // ✅ Mostrar dirección si está disponible
+  // Mostrar dirección si está disponible
   const coordsText = incident.address
     ? incident.address
     : hasCoords

@@ -21,7 +21,7 @@ export default function AuthScreen({ navigation }) {
   const [showPassword, setShowPassword] = useState(false);
   const [resetting, setResetting] = useState(false);
 
-  // 🔹 Restablecer contraseña
+  // Restablecer contraseña
   const handleResetPassword = async () => {
     if (!vm.email) {
       Alert.alert('Ingresa tu correo', 'Escribe tu correo para restablecer la contraseña.');
@@ -111,7 +111,7 @@ export default function AuthScreen({ navigation }) {
             <Text style={styles.btnSecondaryText}>Crear cuenta</Text>
           </TouchableOpacity>
 
-          {/* 🔹 Olvidé mi contraseña */}
+          {/* Olvidé mi contraseña */}
           <TouchableOpacity
             onPress={handleResetPassword}
             disabled={resetting}

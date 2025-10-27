@@ -1,4 +1,3 @@
-// src/services/realtimeIncidents.js
 import { firebaseApp } from './firebase/app';
 import {
   getFirestore,
@@ -48,7 +47,6 @@ export function subscribeIncidents({ scope = 'all', userId, onData, onError }) {
           _fromCache: doc.metadata.fromCache,
         });
       });
-      // Opcional: filtra writes optimistas si no quieres verlos hasta confirmar
       const confirmed = rows.filter((r) => !r._hasPendingWrites);
       onData(confirmed);
     },

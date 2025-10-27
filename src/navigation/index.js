@@ -1,6 +1,6 @@
-// src/navigation/index.js
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { TouchableOpacity, Text, ActivityIndicator, View } from 'react-native';
+import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,7 +18,7 @@ import { subscribeToAuth, logout } from '../services/authService';
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
-/* --- Tabs: Mapa y Lista --- */
+/* Tabs: Mapa y Lista */
 function MainTabs() {
   return (
     <Tab.Navigator
@@ -48,15 +48,37 @@ function MainTabs() {
   );
 }
 
-/* --- Root Navigator con Auth / Main / ReportDetail --- */
+/* Header con título + subtítulo (usuario) */
+function HeaderTitleWithUser({ user }) {
+  const display = useMemo(() => {
+    if (!user) return null;
+    const byEmail = user.email?.split?.('@')?.[0] ?? '';
+    return user.displayName || byEmail || null;
+  }, [user]);
+
+  return (
+    <View>
+      <Text style={{ fontSize: 16, fontWeight: '800', color: colors.text }}>
+        Mi Ciudad Verde
+      </Text>
+      {display ? (
+        <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>
+          {display}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+
 function RootNavigator() {
   const [initializing, setInitializing] = useState(true);
   const [user, setUser] = useState(null);
 
-  // Escuchar cambios de autenticación
+  // Escucha de Auth
   useEffect(() => {
     const unsubscribe = subscribeToAuth((u) => {
-      setUser(u);
+      setUser(u ?? null);
       if (initializing) setInitializing(false);
     });
     return unsubscribe;
@@ -91,19 +113,21 @@ function RootNavigator() {
             name="Main"
             component={MainTabs}
             options={{
-              title: 'Mi Ciudad Verde',
+              headerTitle: () => <HeaderTitleWithUser user={user} />,
               headerRight: () => (
                 <TouchableOpacity
                   onPress={async () => {
                     try {
-                      await logout(); // 👈 Basta con esto: RootNavigator mostrará Auth* al quedar user=null
+                      await logout();
                     } catch (err) {
                       console.error('[LOGOUT ERROR]', err);
                     }
                   }}
                   style={{ paddingHorizontal: 8 }}
                 >
-                  <Text style={{ color: colors.primary, fontWeight: '600' }}>Cerrar sesión</Text>
+                  <Text style={{ color: colors.primary, fontWeight: '600' }}>
+                    Cerrar sesión
+                  </Text>
                 </TouchableOpacity>
               ),
             }}
@@ -124,7 +148,6 @@ function RootNavigator() {
   );
 }
 
-/* --- Export principal (NO NavigationContainer aquí) --- */
 export default function AppNavigator() {
   return <RootNavigator />;
 }

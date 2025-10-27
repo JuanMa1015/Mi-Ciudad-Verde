@@ -1,4 +1,3 @@
-// src/services/notify.js
 import Toast from 'react-native-toast-message';
 
 export function showNewReportToast({ count = 1 } = {}) {

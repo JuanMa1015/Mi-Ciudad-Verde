@@ -56,7 +56,6 @@ export default function RootNavigator() {
         options={{ title: 'Mi Ciudad Verde — Acceso', headerBackVisible: false }}
       />
 
-      {/* 👇 ESTA pantalla debe existir y llamarse exactamente 'Main' */}
       <Stack.Screen
         name="Main"
         component={MainTabs}

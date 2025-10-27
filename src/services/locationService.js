@@ -1,4 +1,3 @@
-// src/services/locationService.js
 import * as Location from 'expo-location';
 
 /** Solicita permisos y devuelve coordenadas actuales */
@@ -20,7 +19,7 @@ export async function getCurrentCoords() {
   };
 }
 
-/** ✅ Reverse Geocoding: obtiene nombre del lugar a partir de coordenadas */
+/* Reverse Geocoding: obtiene nombre del lugar a partir de coordenadas */
 export async function reverseGeocode({ latitude, longitude }) {
   try {
     const places = await Location.reverseGeocodeAsync({ latitude, longitude });

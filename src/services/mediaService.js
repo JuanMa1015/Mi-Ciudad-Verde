@@ -1,6 +1,6 @@
 import * as ImagePicker from 'expo-image-picker';
 
-/** Detecta si la versión soporta la API nueva (MediaType) o la antigua (MediaTypeOptions) */
+/* Detecta si la versión soporta la API nueva (MediaType) o la antigua (MediaTypeOptions) */
 function mediaTypesImage() {
   // SDK nueva (>= 51 aprox.): usa array con ImagePicker.MediaType.image
   if (ImagePicker?.MediaType?.image) return [ImagePicker.MediaType.image];
@@ -10,7 +10,7 @@ function mediaTypesImage() {
   return ImagePicker.MediaTypeOptions?.Images ?? undefined;
 }
 
-/** Utilidad genérica para verificar o solicitar permisos. */
+/* Utilidad genérica para verificar o solicitar permisos. */
 async function ensure(permissionFn, getFn) {
   const current = await getFn();
   if (current.granted) {
@@ -20,7 +20,7 @@ async function ensure(permissionFn, getFn) {
   return { granted: req.granted, canAskAgain: req.canAskAgain !== false, status: req.status };
 }
 
-/** Permiso para cámara */
+/* Permiso para cámara */
 export async function ensureCameraPermission() {
   return ensure(
     () => ImagePicker.requestCameraPermissionsAsync(),
@@ -28,7 +28,7 @@ export async function ensureCameraPermission() {
   );
 }
 
-/** Permiso para galería */
+/* Permiso para galería */
 export async function ensureLibraryPermission() {
   return ensure(
     () => ImagePicker.requestMediaLibraryPermissionsAsync(),
@@ -36,7 +36,7 @@ export async function ensureLibraryPermission() {
   );
 }
 
-/** 📸 Tomar una foto con la cámara */
+/* Tomar una foto con la cámara */
 export async function takePhoto() {
   const perm = await ensureCameraPermission();
   if (!perm.granted) {
@@ -51,7 +51,7 @@ export async function takePhoto() {
       allowsEditing: false,
       quality: 0.8,
       exif: false,
-      mediaTypes: mediaTypesImage(), // ✅ retro-compatible
+      mediaTypes: mediaTypesImage(), 
     });
     if (result.canceled) return null;
     const asset = result.assets?.[0];
@@ -63,7 +63,7 @@ export async function takePhoto() {
   }
 }
 
-/** 🖼️ Escoger imagen de la galería */
+/* Escoger imagen de la galería */
 export async function pickImage() {
   const perm = await ensureLibraryPermission();
   if (!perm.granted) {
@@ -78,7 +78,7 @@ export async function pickImage() {
       allowsEditing: false,
       quality: 0.8,
       exif: false,
-      mediaTypes: mediaTypesImage(), // ✅ retro-compatible
+      mediaTypes: mediaTypesImage(), 
     });
     if (result.canceled) return null;
     const asset = result.assets?.[0];

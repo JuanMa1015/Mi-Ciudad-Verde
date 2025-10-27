@@ -23,8 +23,8 @@ export default function ReportsListScreen({ navigation }) {
   const publicVM = useMapViewModel();
 
   const user = currentUser();
-  const uid = user?.uid;
-  const email = user?.email;
+  const uid = user?.uid ?? null;
+  const email = user?.email ?? null;
 
   // Fallback: si "Mis reportes" está vacío (p.ej. reportes viejos sin userId),
   // filtramos localmente los públicos por userId==uid o userEmail==email.
@@ -32,7 +32,6 @@ export default function ReportsListScreen({ navigation }) {
     if (!uid && !email) return myVM.incidents;
     if (myVM.incidents.length > 0) return myVM.incidents;
 
-    // Filtro local sobre todos (solo si no llegó nada de la query 'mine')
     const filtered = publicVM.incidents.filter((it) => {
       return (it.userId && it.userId === uid) || (it.userEmail && it.userEmail === email);
     });
@@ -60,6 +59,30 @@ export default function ReportsListScreen({ navigation }) {
           },
         },
       ]
+    );
+  };
+
+  // Función auxiliar para formatear fecha
+  const formatDate = (createdAt) => {
+    const ms =
+      typeof createdAt === 'number'
+        ? createdAt
+        : createdAt?.toMillis?.() ?? null;
+    return ms ? new Date(ms).toLocaleString() : '';
+  };
+
+  // Función para mostrar autor
+  const renderAuthor = (item) => {
+    const authorEmail = item?.userEmail || '';
+    const authorName = item?.userName || (authorEmail ? authorEmail.split('@')[0] : null);
+    if (!authorEmail && !authorName) return null;
+
+    const isMine = email && authorEmail && authorEmail.toLowerCase() === email.toLowerCase();
+
+    return (
+      <Text style={styles.author}>
+        📍 {isMine ? 'Reportado por ti' : `Reportado por ${authorName}`}
+      </Text>
     );
   };
 
@@ -121,7 +144,6 @@ export default function ReportsListScreen({ navigation }) {
           keyExtractor={(item) => item.id}
           ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
           renderItem={({ item }) => {
-            // Permiso de eliminación: solo si realmente es del usuario actual
             const canDelete = showMine && item.userId && item.userId === uid;
 
             return (
@@ -146,14 +168,10 @@ export default function ReportsListScreen({ navigation }) {
                         }`}
                   </Text>
 
-                  <Text style={styles.date}>
-                    {new Date(item.createdAt).toLocaleString()}
-                  </Text>
+                  <Text style={styles.date}>{formatDate(item.createdAt)}</Text>
 
-                  {/* Autor visible solo en “Todos” si viene userEmail */}
-                  {!showMine && item.userEmail ? (
-                    <Text style={styles.author}>por {item.userEmail}</Text>
-                  ) : null}
+                  {/* Mostrar autor en cualquier vista */}
+                  {renderAuthor(item)}
 
                   <View style={styles.actions}>
                     <TouchableOpacity
@@ -192,6 +210,7 @@ export default function ReportsListScreen({ navigation }) {
   );
 }
 
+/* Styles */
 const styles = StyleSheet.create({
   header: {
     paddingHorizontal: 16,
@@ -248,7 +267,7 @@ const styles = StyleSheet.create({
   desc: { color: colors.text, marginBottom: 4, fontWeight: '600' },
   coords: { color: colors.muted, fontSize: 12, marginBottom: 2 },
   date: { color: colors.muted, fontSize: 12, marginBottom: 4 },
-  author: { color: colors.muted, fontSize: 11, fontStyle: 'italic' },
+  author: { color: colors.muted, fontSize: 12, marginBottom: 2 },
 
   actions: {
     flexDirection: 'row',

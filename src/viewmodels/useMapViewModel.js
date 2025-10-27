@@ -1,47 +1,56 @@
-// src/viewmodels/useMapViewModel.js
-import { useEffect, useState, useRef } from 'react';
-import { subscribeIncidents } from '../services/realtimeIncidents';
-import { showNewReportToast } from '../services/notify';
+import { useEffect, useState } from 'react';
+import { firebaseApp } from '../services/firebase/app';
+import {
+  getFirestore,
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+} from 'firebase/firestore';
 
 export default function useMapViewModel() {
   const [loading, setLoading] = useState(true);
   const [incidents, setIncidents] = useState([]);
 
-  // Para detectar nuevos docs
-  const prevIdsRef = useRef(new Set());
-  const raf = useRef(null);
-
   useEffect(() => {
-    const unsub = subscribeIncidents({
-      scope: 'all',
-      onData: (rows) => {
-        // Detectar nuevos (por id) que antes no existían
-        const prev = prevIdsRef.current;
-        const incomingIds = new Set(rows.map((r) => r.id));
-        let newCount = 0;
-        rows.forEach((r) => {
-          if (!prev.has(r.id)) newCount += 1;
-        });
-        // Actualizar ref
-        prevIdsRef.current = incomingIds;
+    const db = getFirestore(firebaseApp);
+    const col = collection(db, 'incidents');
+    const q = query(col, orderBy('createdAt', 'desc'));
 
-        if (newCount > 0) {
-          showNewReportToast({ count: newCount });
-        }
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const rows = [];
+        snap.forEach((doc) => {
+          const d = doc.data();
+          rows.push({
+            id: doc.id,
+            description: d.description || '',
+            address: d.address || '',
 
-        if (raf.current) cancelAnimationFrame(raf.current);
-        raf.current = requestAnimationFrame(() => {
-          setIncidents(rows);
-          setLoading(false);
+            userEmail: d.userEmail || '',
+            userId: d.userId || '',
+            userName: d.userName || '',
+
+            location: d.location || { latitude: 0, longitude: 0 },
+            photoUrl: d.photoUrl || '',
+            // normaliza createdAt (Timestamp o number)
+            createdAt:
+              typeof d.createdAt === 'number'
+                ? d.createdAt
+                : d.createdAt?.toMillis?.() ?? Date.now(),
+          });
         });
+        setIncidents(rows);
+        setLoading(false);
       },
-      onError: () => setLoading(false),
-    });
+      (err) => {
+        console.error('[MapVM Firestore snapshot error]', err);
+        setLoading(false);
+      }
+    );
 
-    return () => {
-      if (raf.current) cancelAnimationFrame(raf.current);
-      unsub();
-    };
+    return () => unsub();
   }, []);
 
   return { loading, incidents };
