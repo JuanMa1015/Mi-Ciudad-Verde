@@ -5,7 +5,7 @@ Desarrollada con **React Native + Expo**, arquitectura **MVVM**, y backend en **
 
 ---
 
-##Tecnologías utilizadas
+## Tecnologías utilizadas
 
 - **Expo (React Native Managed Flow)**
 - **Firebase**
