@@ -1,56 +1,55 @@
+// src/viewmodels/useMapViewModel.js
 import { useEffect, useState } from 'react';
-import { firebaseApp } from '../services/firebase/app';
-import {
-  getFirestore,
-  collection,
-  query,
-  orderBy,
-  onSnapshot,
-} from 'firebase/firestore';
+import { subscribeIncidents } from '../services/firestoreService';
 
+// Hook que trae TODOS los reportes (públicos) para el mapa
 export default function useMapViewModel() {
   const [loading, setLoading] = useState(true);
   const [incidents, setIncidents] = useState([]);
 
   useEffect(() => {
-    const db = getFirestore(firebaseApp);
-    const col = collection(db, 'incidents');
-    const q = query(col, orderBy('createdAt', 'desc'));
+    // nos suscribimos a TODOS
+    const unsubscribe = subscribeIncidents({
+      scope: 'all',
+      onData: (rows) => {
+        // Normalizamos un poquito por si algún doc viene viejo
+        const normalized = rows.map((d) => ({
+          id: d.id,
+          description: d.description || '',
+          address: d.address || '',
+          location: d.location || { latitude: 0, longitude: 0 },
+          photoUrl: d.photoUrl || '',
+          photoUrls: Array.isArray(d.photoUrls)
+            ? d.photoUrls
+            : d.photoUrls
+            ? [d.photoUrls]
+            : [],
+          videoUrls: Array.isArray(d.videoUrls)
+            ? d.videoUrls
+            : d.videoUrls
+            ? [d.videoUrls]
+            : [],
+          category: d.category || '',
+          subcategory: d.subcategory || '',
+          userEmail: d.userEmail || '',
+          userId: d.userId || '',
+          createdAt: d.createdAt ?? Date.now(),
+        }));
 
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const rows = [];
-        snap.forEach((doc) => {
-          const d = doc.data();
-          rows.push({
-            id: doc.id,
-            description: d.description || '',
-            address: d.address || '',
-
-            userEmail: d.userEmail || '',
-            userId: d.userId || '',
-            userName: d.userName || '',
-
-            location: d.location || { latitude: 0, longitude: 0 },
-            photoUrl: d.photoUrl || '',
-            // normaliza createdAt (Timestamp o number)
-            createdAt:
-              typeof d.createdAt === 'number'
-                ? d.createdAt
-                : d.createdAt?.toMillis?.() ?? Date.now(),
-          });
-        });
-        setIncidents(rows);
+        setIncidents(normalized);
         setLoading(false);
       },
-      (err) => {
-        console.error('[MapVM Firestore snapshot error]', err);
+      onError: (err) => {
+        console.log('[Map VM] snapshot error', err);
         setLoading(false);
-      }
-    );
+      },
+    });
 
-    return () => unsub();
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    };
   }, []);
 
   return { loading, incidents };

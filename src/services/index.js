@@ -10,10 +10,11 @@ import MapScreen from '../views/MapScreen';
 import ReportsListScreen from '../views/ReportsListScreen';
 
 export * as LocationService from './locationService';
-export * as MediaService from './mediaService';
 export * as FirestoreService from './firestoreService';
 export * from './authService';
 export * from './logger';
+export { MediaService } from './mediaService';
+
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();

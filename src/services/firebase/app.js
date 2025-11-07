@@ -1,5 +1,13 @@
+// src/services/firebase/app.js
 import { initializeApp, getApps } from 'firebase/app';
-import { firebaseConfig } from './config'; // <— usa tu config.js (no el sample)
+import { firebaseConfig } from '../firebase/config'; // <- tu config real
 
-export const firebaseApp =
-  getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
+let app;
+
+if (!getApps().length) {
+  app = initializeApp(firebaseConfig);
+} else {
+  app = getApps()[0];
+}
+
+export { app };

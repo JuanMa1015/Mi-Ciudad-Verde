@@ -1,10 +1,13 @@
+// src/services/locationService.js
 import * as Location from 'expo-location';
 
-/** Solicita permisos y devuelve coordenadas actuales */
+/**
+ * Devuelve { latitude, longitude }
+ */
 export async function getCurrentCoords() {
   const { status } = await Location.requestForegroundPermissionsAsync();
   if (status !== 'granted') {
-    const err = new Error('Permiso de ubicación denegado');
+    const err = new Error('LOCATION_PERMISSION_DENIED');
     err.code = 'LOCATION_PERMISSION_DENIED';
     throw err;
   }
@@ -19,24 +22,31 @@ export async function getCurrentCoords() {
   };
 }
 
-/* Reverse Geocoding: obtiene nombre del lugar a partir de coordenadas */
+/**
+ * Devuelve un string de dirección aproximada
+ */
 export async function reverseGeocode({ latitude, longitude }) {
   try {
     const places = await Location.reverseGeocodeAsync({ latitude, longitude });
     if (!places || !places.length) return null;
 
-    const place = places[0];
+    const p = places[0];
     const parts = [
-      place.name,      // ej: “Parque de Belén”
-      place.district,  // ej: “Belén”
-      place.city,      // ej: “Medellín”
-      place.region,    // ej: “Antioquia”
-      place.country,   // ej: “Colombia”
+      p.name,
+      p.district,
+      p.city,
+      p.region,
+      p.country,
     ].filter(Boolean);
 
     return parts.join(', ');
   } catch (e) {
-    console.error('[reverseGeocode]', e);
+    console.warn('[reverseGeocode]', e);
     return null;
   }
 }
+
+export const LocationService = {
+  getCurrentCoords,
+  reverseGeocode,
+};

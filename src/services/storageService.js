@@ -1,49 +1,60 @@
-import * as FileSystem from 'expo-file-system';
-import { firebaseApp } from './firebase/app';
+// src/services/storageService.js
+import { app } from './firebase/app';
 import {
   getStorage,
   ref,
-  uploadString,
+  uploadBytes,
   getDownloadURL,
 } from 'firebase/storage';
+import * as FileSystem from 'expo-file-system';
 
-function guessContentType(uri) {
-  const lower = String(uri).toLowerCase();
-  if (lower.endsWith('.png')) return 'image/png';
-  if (lower.endsWith('.webp')) return 'image/webp';
-  if (lower.endsWith('.heic') || lower.endsWith('.heif')) return 'image/heic';
-  return 'image/jpeg'; // por defecto
+// instancia de storage desde la app que ya inicializamos
+const storage = getStorage(app);
+
+/**
+ * Convierte una URI local de Expo (file://, content://) a un Blob
+ * Firebase Storage en RN/Expo lo necesita así.
+ */
+async function uriToBlob(uri) {
+  const res = await fetch(uri);
+  const blob = await res.blob();
+  return blob;
 }
 
 /**
- * Sube una imagen local (file:// o content://) a Firebase Storage en base64
- * y devuelve el downloadURL. Mucho más estable en Expo que fetch(...).blob().
+ * Sube **un** archivo y devuelve la URL pública.
+ * @param {string} uri - uri local (de cámara o galería)
+ * @param {string} path - ruta en firebase storage, ej. `incidents/123/photo_0.jpg`
  */
-// export async function uploadIncidentPhoto(localUri, { userId = 'guest', incidentId }) {
-//   if (!localUri) return '';
+export async function uploadFile(uri, path) {
+  try {
+    const blob = await uriToBlob(uri);
+    const fileRef = ref(storage, path);
+    await uploadBytes(fileRef, blob);
+    const downloadUrl = await getDownloadURL(fileRef);
+    return downloadUrl;
+  } catch (err) {
+    console.log('[STORAGE UPLOAD ERROR]', err?.code, err?.message, err);
+    throw err;
+  }
+}
 
-//   const storage = getStorage(firebaseApp);
-//   const safeUser = userId || 'guest';
-//   const safeId = incidentId || Date.now().toString();
+/**
+ * Sube varias URIs (fotos o videos) y devuelve sus URLs en el mismo orden.
+ * @param {string[]} uris
+ * @param {string} basePath
+ */
+export async function uploadMany(uris = [], basePath = 'incidents') {
+  const results = [];
 
-//   const ext = (localUri.split('.').pop() || 'jpg').replace(/\?.*$/, '');
-//   const path = `incidents/${safeUser}/${safeId}.${ext}`;
-//   const storageRef = ref(storage, path);
+  for (let i = 0; i < uris.length; i++) {
+    const uri = uris[i];
+    // intentamos detectar extensión
+    const ext = uri.split('.').pop()?.split('?')[0] || 'jpg';
+    const path = `${basePath}/file_${Date.now()}_${i}.${ext}`;
+    const url = await uploadFile(uri, path);
+    results.push(url);
+  }
 
-//   // Lee como base64 (funciona para file:// y content:// en Android)
-//   const base64 = await FileSystem.readAsStringAsync(localUri, { encoding: FileSystem.EncodingType.Base64 });
-//   const contentType = guessContentType(localUri);
-
-//   // Sube base64
-//   await uploadString(storageRef, base64, 'base64', { contentType });
-
-//   // URL de descarga
-//   const downloadURL = await getDownloadURL(storageRef);
-//   return downloadURL;
-// }
-
-// No-op mientras USE_STORAGE=false. Así no rompes imports existentes.
-export async function uploadIncidentPhoto(localUri, { userId = 'guest', incidentId }) {
-  // Devuelve cadena vacía para que Firestore guarde photoUrl: ''
-  return '';
+  return results;
 }

@@ -1,142 +1,175 @@
 // src/viewmodels/useReportViewModel.js
-import { useState, useCallback } from 'react';
-import { Alert, Linking } from 'react-native';
-import { nanoid } from 'nanoid/non-secure';
-import { createIncident } from '../models/Incident';
+import { useState } from 'react';
+import { Alert } from 'react-native';
 import { currentUser } from '../services/authService';
-import * as LocationService from '../services/locationService';
-import * as MediaService from '../services/mediaService';
-import * as FirestoreService from '../services/firestoreService';
-import { log } from '../services/logger';
-
-function showBlockedPermissionAlert(title, body) {
-  Alert.alert(
-    title,
-    `${body}\n\nPuedes habilitarlo en Ajustes del sistema.`,
-    [
-      { text: 'Cancelar', style: 'cancel' },
-      { text: 'Abrir Ajustes', onPress: () => Linking.openSettings?.() },
-    ]
-  );
-}
+import { getCurrentCoords, reverseGeocode } from '../services/locationService';
+import { saveReport } from '../services/firestoreService';
+import { takePhoto, pickImage, pickVideo } from '../services/mediaService';
 
 export default function useReportViewModel({ navigation }) {
-  const user = currentUser();
-  const [incident, setIncident] = useState(createIncident({ userId: user?.uid || 'guest' }));
-  const [submitting, setSubmitting] = useState(false);
+  const [incident, setIncident] = useState({
+    description: '',
+    category: '',
+    subcategory: '',
+    photos: [],
+    videos: [],
+    location: null,
+    address: '',
+  });
+
   const [busy, setBusy] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
-  const updateDescription = useCallback((text) => {
+  // ☑️ seleccionar categoría
+  const updateCategory = (categoryName) => {
+    setIncident((prev) => ({
+      ...prev,
+      category: categoryName,
+      subcategory: '',
+      // si solo hay categoría, la descripción es la categoría
+      description: categoryName,
+    }));
+  };
+
+  // ☑️ seleccionar subcategoría
+  const updateSubcategory = (subName) => {
+    setIncident((prev) => ({
+      ...prev,
+      subcategory: subName,
+      // categoría - subcategoría
+      description: prev.category ? `${prev.category} - ${subName}` : subName,
+    }));
+  };
+
+  // por si en algún momento quieres editar a mano
+  const updateDescription = (text) => {
     setIncident((prev) => ({ ...prev, description: text }));
-  }, []);
+  };
 
-  const attachFromGallery = useCallback(async () => {
+  // ---- media ----
+  const addPhotoFromGallery = async () => {
     try {
-      setBusy(true);
-      const img = await MediaService.pickImage();
-      if (img) setIncident((p) => ({ ...p, photoUrl: img.uri }));
-    } catch (e) {
-      console.error('[Gallery]', e);
-      Alert.alert('Error', e.message ?? 'No fue posible abrir la galería.');
-    } finally {
-      setBusy(false);
-    }
-  }, []);
-
-  const takeNewPhoto = useCallback(async () => {
-    try {
-      setBusy(true);
-      const img = await MediaService.takePhoto();
-      if (img) setIncident((p) => ({ ...p, photoUrl: img.uri }));
-    } catch (e) {
-      console.error('[Camera]', e);
-      Alert.alert('Error', e.message ?? 'No fue posible tomar la foto.');
-    } finally {
-      setBusy(false);
-    }
-  }, []);
-
-  /** ✅ Usa ubicación actual y guarda dirección */
-  const useCurrentLocation = useCallback(async () => {
-    try {
-      setBusy(true);
-      const coords = await LocationService.getCurrentCoords();
-      const address = await LocationService.reverseGeocode(coords);
-
-      setIncident((p) => ({
-        ...p,
-        location: {
-          latitude: coords.latitude,
-          longitude: coords.longitude,
-        },
-        address: address || 'Ubicación desconocida',
+      const img = await pickImage();
+      if (!img) return;
+      setIncident((prev) => ({
+        ...prev,
+        photos: [...prev.photos, img],
       }));
     } catch (e) {
-      console.error('[Location]', e);
-      if (e?.code === 'LOCATION_PERMISSION_DENIED') {
-        showBlockedPermissionAlert(
-          'Permiso de ubicación requerido',
-          'Sin permiso no podemos obtener tu ubicación.'
-        );
-      } else {
-        Alert.alert(
-          'Error',
-          `Ubicación: ${e?.message ?? 'No fue posible obtener tu ubicación.'}`
-        );
-      }
+      console.log('[Gallery]', e);
+      Alert.alert('Error', 'No se pudo abrir la galería.');
+    }
+  };
+
+  const addPhotoFromCamera = async () => {
+    try {
+      const img = await takePhoto();
+      if (!img) return;
+      setIncident((prev) => ({
+        ...prev,
+        photos: [...prev.photos, img],
+      }));
+    } catch (e) {
+      console.log('[Camera]', e);
+      Alert.alert('Error', 'No se pudo abrir la cámara.');
+    }
+  };
+
+  const removePhoto = (uri) => {
+    setIncident((prev) => ({
+      ...prev,
+      photos: prev.photos.filter((p) => p.uri !== uri),
+    }));
+  };
+
+  const addVideo = async () => {
+    try {
+      const vid = await pickVideo();
+      if (!vid) return;
+      setIncident((prev) => ({
+        ...prev,
+        videos: [...prev.videos, vid],
+      }));
+    } catch (e) {
+      console.log('[Video]', e);
+      Alert.alert('Error', 'No se pudo seleccionar el video.');
+    }
+  };
+
+  const removeVideo = (uri) => {
+    setIncident((prev) => ({
+      ...prev,
+      videos: prev.videos.filter((v) => v.uri !== uri),
+    }));
+  };
+
+  // ---- ubicación ----
+  const useCurrentLocation = async () => {
+    try {
+      setBusy(true);
+      const coords = await getCurrentCoords();
+      const addr = await reverseGeocode(coords);
+      setIncident((prev) => ({
+        ...prev,
+        location: coords,
+        address: addr || prev.address || '',
+      }));
+    } catch (e) {
+      Alert.alert('Ubicación', 'No pudimos obtener tu ubicación.');
     } finally {
       setBusy(false);
     }
-  }, []);
+  };
 
-
-  const submit = useCallback(async () => {
-    if (!incident.description?.trim()) {
-      Alert.alert('Falta descripción', 'Describe el problema.');
-      return;
-    }
-
-    const hasCoords =
-      typeof incident.location?.latitude === 'number' &&
-      typeof incident.location?.longitude === 'number';
-
-    if (!hasCoords) {
-      Alert.alert('Falta ubicación', 'Agrega tu ubicación.');
+  // ---- enviar ----
+  const submit = async () => {
+    // validación mínima: categoría
+    if (!incident.category) {
+      Alert.alert('Falta categoría', 'Selecciona una categoría.');
       return;
     }
 
     setSubmitting(true);
     try {
-      const userId = user?.uid || 'guest';
-      const generatedId = nanoid(12);
+      const user = currentUser();
 
-      const newIncident = {
-        ...incident,
-        id: generatedId,
-        userId,
-        userEmail: user?.email ?? 'anon',
-        createdAt: new Date(),
-      };
+      await saveReport({
+        description: incident.description || incident.category,
+        category: incident.category || '',
+        subcategory: incident.subcategory || '',
+        address: incident.address || '',
+        location: incident.location || null,
+        // compat con lo viejo
+        photoUrl: incident.photos[0]?.uri || '',
+        photoUrls: incident.photos.map((p) => p.uri),
+        videoUrls: incident.videos.map((v) => v.uri),
+        userId: user?.uid || null,
+        userEmail: user?.email || null,
+      });
 
-      await FirestoreService.addIncidentDoc(newIncident);
-      Alert.alert('¡Gracias!', 'Tu reporte fue enviado correctamente.');
-      setIncident(createIncident({ userId }));
-      navigation.navigate('Main');
+      Alert.alert('Listo', 'Reporte enviado.');
+      navigation.goBack?.();
     } catch (e) {
-      console.error('[SUBMIT ERROR]', e);
-      Alert.alert('Error', 'No fue posible enviar el reporte.');
+      console.log('[SUBMIT ERROR]', e);
+      Alert.alert('Error', 'No se pudo guardar el reporte.');
     } finally {
       setSubmitting(false);
     }
-  }, [incident, navigation]);
+  };
 
   return {
     incident,
-    submitting,
     busy,
+    submitting,
+    // expuesto al componente:
+    updateCategory,
+    updateSubcategory,
     updateDescription,
-    attachFromGallery,
-    takeNewPhoto,
+    addPhotoFromGallery,
+    addPhotoFromCamera,
+    removePhoto,
+    addVideo,
+    removeVideo,
     useCurrentLocation,
     submit,
   };

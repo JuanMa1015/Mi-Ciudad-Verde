@@ -1,72 +1,104 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
-import { Alert } from 'react-native';
+// src/viewmodels/useReportsListViewModel.js
+import { useEffect, useState } from 'react';
+import { subscribeIncidents, getUserReports } from '../services/firestoreService';
 import { currentUser } from '../services/authService';
-import { subscribeIncidents } from '../services/realtimeIncidents';
-import { deleteIncidentDoc } from '../services/firestoreService';
-import { showNewReportToast } from '../services/notify';
 
-export default function useReportsListViewModel() {
+/**
+ * Hook para listar reportes (todos o solo los del usuario actual)
+ * @param {'all'|'mine'} scope
+ */
+export default function useReportsListViewModel(scope = 'all') {
   const [loading, setLoading] = useState(true);
   const [incidents, setIncidents] = useState([]);
-  const user = currentUser();
-  const prevIdsRef = useRef(new Set());
-  const raf = useRef(null);
 
   useEffect(() => {
-    if (!user) {
-      setIncidents([]);
-      setLoading(false);
-      return;
+    let unsubscribe;
+
+    async function init() {
+      setLoading(true);
+      const user = currentUser();
+
+      // Si el usuario quiere ver solo los suyos
+      if (scope === 'mine' && user?.uid) {
+        // suscripción realtime
+        unsubscribe = subscribeIncidents({
+          scope: 'mine',
+          userId: user.uid,
+          onData: (rows) => {
+            const normalized = rows.map((d) => ({
+              id: d.id,
+              description: d.description || '',
+              address: d.address || '',
+              location: d.location || { latitude: 0, longitude: 0 },
+              photoUrl: d.photoUrl || '',
+              photoUrls: Array.isArray(d.photoUrls)
+                ? d.photoUrls
+                : d.photoUrls
+                ? [d.photoUrls]
+                : [],
+              videoUrls: Array.isArray(d.videoUrls)
+                ? d.videoUrls
+                : d.videoUrls
+                ? [d.videoUrls]
+                : [],
+              category: d.category || '',
+              subcategory: d.subcategory || '',
+              userEmail: d.userEmail || '',
+              userId: d.userId || '',
+              createdAt: d.createdAt ?? Date.now(),
+            }));
+            setIncidents(normalized);
+            setLoading(false);
+          },
+          onError: (err) => {
+            console.log('[List VM] snapshot error', err);
+            setLoading(false);
+          },
+        });
+      } else {
+        // Todos los reportes
+        unsubscribe = subscribeIncidents({
+          scope: 'all',
+          onData: (rows) => {
+            const normalized = rows.map((d) => ({
+              id: d.id,
+              description: d.description || '',
+              address: d.address || '',
+              location: d.location || { latitude: 0, longitude: 0 },
+              photoUrl: d.photoUrl || '',
+              photoUrls: Array.isArray(d.photoUrls)
+                ? d.photoUrls
+                : d.photoUrls
+                ? [d.photoUrls]
+                : [],
+              videoUrls: Array.isArray(d.videoUrls)
+                ? d.videoUrls
+                : d.videoUrls
+                ? [d.videoUrls]
+                : [],
+              category: d.category || '',
+              subcategory: d.subcategory || '',
+              userEmail: d.userEmail || '',
+              userId: d.userId || '',
+              createdAt: d.createdAt ?? Date.now(),
+            }));
+            setIncidents(normalized);
+            setLoading(false);
+          },
+          onError: (err) => {
+            console.log('[List VM] snapshot error', err);
+            setLoading(false);
+          },
+        });
+      }
     }
 
-    const unsub = subscribeIncidents({
-      scope: 'mine',
-      userId: user.uid,
-      onData: (rows) => {
-        const prev = prevIdsRef.current;
-        const incomingIds = new Set(rows.map((r) => r.id));
-        let newCount = 0;
-        rows.forEach((r) => {
-          if (!prev.has(r.id)) newCount += 1;
-        });
-        prevIdsRef.current = incomingIds;
-        if (newCount > 0) showNewReportToast({ count: newCount });
-
-        if (raf.current) cancelAnimationFrame(raf.current);
-        raf.current = requestAnimationFrame(() => {
-          setIncidents(rows);
-          setLoading(false);
-        });
-      },
-      onError: () => setLoading(false),
-    });
+    init();
 
     return () => {
-      if (raf.current) cancelAnimationFrame(raf.current);
-      unsub();
+      if (typeof unsubscribe === 'function') unsubscribe();
     };
-  }, []);
+  }, [scope]);
 
-  const deleteIncident = useCallback(async (id) => {
-    Alert.alert(
-      'Eliminar reporte',
-      '¿Seguro que quieres eliminar este reporte?',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Eliminar',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await deleteIncidentDoc(id);
-            } catch (err) {
-              Alert.alert('Error', 'No fue posible eliminar el reporte.');
-            }
-          },
-        },
-      ]
-    );
-  }, []);
-
-  return { loading, incidents, deleteIncident };
+  return { loading, incidents };
 }
