@@ -1,6 +1,6 @@
 // src/navigation/index.js
-import React, { useMemo } from 'react';
-import { TouchableOpacity, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { TouchableOpacity, Text, ActivityIndicator, View } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,10 +11,11 @@ import ReportScreen from '../views/ReportScreen';
 import ReportDetailScreen from '../views/ReportDetailScreen';
 import AuthLoginScreen from '../views/AuthLoginScreen';
 import AuthRegisterScreen from '../views/AuthRegisterScreen';
-import AdminPanelScreen from '../views/AdminPanelScreen';
+import AdminPanelScreen from '../views/AdminPanelScreen';   // Reportes
+import AdminUsersScreen from '../views/AdminUsersScreen';   // Usuarios (nuevo)
 
 import colors from '../theme/colors';
-import { logout } from '../services/authService';
+import { subscribeToAuth, logout } from '../services/authService';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -49,7 +50,37 @@ function MainTabs() {
   );
 }
 
-/* ---------- Header con nombre ---------- */
+/* ---------- Tabs Admin (Reportes + Usuarios) ---------- */
+function AdminTabs() {
+  return (
+    <Tab.Navigator
+      screenOptions={{
+        headerShown: false,
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: '#9CA3AF',
+      }}
+    >
+      <Tab.Screen
+        name="AdminReports"
+        component={AdminPanelScreen}
+        options={{
+          title: 'Reportes',
+          tabBarIcon: ({ color, size }) => <Ionicons name="alert-circle" color={color} size={size} />,
+        }}
+      />
+      <Tab.Screen
+        name="AdminUsers"
+        component={AdminUsersScreen}
+        options={{
+          title: 'Usuarios',
+          tabBarIcon: ({ color, size }) => <Ionicons name="people" color={color} size={size} />,
+        }}
+      />
+    </Tab.Navigator>
+  );
+}
+
+/* ---------- Header con nombre de usuario ---------- */
 function HeaderTitleWithUser({ user }) {
   const display = useMemo(() => {
     if (!user) return null;
@@ -60,16 +91,32 @@ function HeaderTitleWithUser({ user }) {
   return (
     <View>
       <Text style={{ fontSize: 16, fontWeight: '800', color: colors.text }}>Mi Ciudad Verde</Text>
-      {display ? (
-        <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>{display}</Text>
-      ) : null}
+      {display ? <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>{display}</Text> : null}
     </View>
   );
 }
 
 /* ---------- Root Navigator ---------- */
-function RootNavigator({ user }) {
-  // Ya no hay spinner aquí; App.js muestra el ActivityIndicator mientras se inicializa
+function RootNavigator() {
+  const [initializing, setInitializing] = useState(true);
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToAuth((u) => {
+      setUser(u);
+      if (initializing) setInitializing(false);
+    });
+    return unsubscribe;
+  }, [initializing]);
+
+  if (initializing) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
+    );
+  }
+
   const role = user?.role ? String(user.role).trim().toLowerCase() : 'user';
 
   return (
@@ -84,12 +131,12 @@ function RootNavigator({ user }) {
         // -------- ADMIN --------
         <>
           <Stack.Screen
-            name="AdminPanel"
-            component={AdminPanelScreen}
+            name="AdminTabs"
+            component={AdminTabs}
             options={{
               headerTitle: () => <HeaderTitleWithUser user={user} />,
               headerRight: () => (
-                <TouchableOpacity onPress={logout} style={{ paddingHorizontal: 8 }}>
+                <TouchableOpacity onPress={async () => { await logout(); }} style={{ paddingHorizontal: 8 }}>
                   <Text style={{ color: colors.primary, fontWeight: '600' }}>Cerrar sesión</Text>
                 </TouchableOpacity>
               ),
@@ -106,7 +153,7 @@ function RootNavigator({ user }) {
             options={{
               headerTitle: () => <HeaderTitleWithUser user={user} />,
               headerRight: () => (
-                <TouchableOpacity onPress={logout} style={{ paddingHorizontal: 8 }}>
+                <TouchableOpacity onPress={async () => { await logout(); }} style={{ paddingHorizontal: 8 }}>
                   <Text style={{ color: colors.primary, fontWeight: '600' }}>Cerrar sesión</Text>
                 </TouchableOpacity>
               ),
@@ -120,7 +167,6 @@ function RootNavigator({ user }) {
   );
 }
 
-export default function AppNavigator({ user }) {
-  // 👈 Exporta SOLO el árbol de navegadores (App.js ya tiene NavigationContainer)
-  return <RootNavigator user={user} />;
+export default function AppNavigator() {
+  return <RootNavigator />;
 }

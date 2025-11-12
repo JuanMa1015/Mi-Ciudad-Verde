@@ -19,9 +19,9 @@ import { app } from './firebase/app';
 
 const db = getFirestore(app);
 
-/* =========================================================
- * USERS
- * =======================================================*/
+/* =========================
+ * USERS (básico)
+ * ========================= */
 export async function createUserDoc({ uid, email, displayName = '', role = 'user' }) {
   if (!uid) return;
   const ref = doc(db, 'users', uid);
@@ -30,7 +30,8 @@ export async function createUserDoc({ uid, email, displayName = '', role = 'user
     {
       email: email || '',
       displayName: displayName || '',
-      role,
+      role: String(role || 'user').trim().toLowerCase(),
+      updatedAt: serverTimestamp(),
     },
     { merge: true }
   );
@@ -41,7 +42,7 @@ export async function getUserRole(uid) {
   const ref = doc(db, 'users', uid);
   const snap = await getDoc(ref);
   if (!snap.exists()) return null;
-  return snap.data().role || null;
+  return (snap.data().role || 'user').toString().trim().toLowerCase();
 }
 
 export async function getUserById(uid) {
@@ -52,16 +53,66 @@ export async function getUserById(uid) {
   return { id: snap.id, ...snap.data() };
 }
 
-/** Realtime al doc del usuario (para rol en vivo) */
 export function subscribeUserDoc(uid, onNext, onError) {
   if (!uid) return () => {};
   const ref = doc(db, 'users', uid);
   return onSnapshot(ref, onNext, onError);
 }
 
-/* =========================================================
+/* =========================
+ * USERS – CRUD Admin
+ * ========================= */
+export function subscribeUsers({ onData, onError }) {
+  try {
+    const colRef = collection(db, 'users');
+    const qRef = query(colRef, orderBy('email', 'asc'));
+    return onSnapshot(
+      qRef,
+      (snap) => {
+        const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        onData?.(rows);
+      },
+      (e) => onError?.(e)
+    );
+  } catch (e) {
+    onError?.(e);
+    return () => {};
+  }
+}
+
+export async function upsertUserDoc({ uid, email, displayName = '', role = 'user' }) {
+  if (!uid) throw new Error('uid requerido');
+  const ref = doc(db, 'users', uid);
+  await setDoc(
+    ref,
+    {
+      email: email || '',
+      displayName: displayName || '',
+      role: String(role || 'user').trim().toLowerCase(),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
+export async function updateUserDocFields(uid, fields) {
+  if (!uid) throw new Error('uid requerido');
+  const ref = doc(db, 'users', uid);
+  await updateDoc(ref, {
+    ...fields,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function deleteUserDoc(uid) {
+  if (!uid) throw new Error('uid requerido');
+  const ref = doc(db, 'users', uid);
+  await deleteDoc(ref);
+}
+
+/* =========================
  * INCIDENTS
- * =======================================================*/
+ * ========================= */
 export async function saveReport(data = {}) {
   const ref = collection(db, 'incidents');
 
@@ -127,7 +178,7 @@ export async function updateIncidentDoc(id, data) {
   await updateDoc(ref, data);
 }
 
-/** Asignación desde admin */
+/** Asignar dept/unidad (no cambia estado) */
 export async function assignIncidentTo(id, { deptId, deptName, unitId, unitName, adminEmail }) {
   const ref = doc(db, 'incidents', id);
   await updateDoc(ref, {
@@ -137,18 +188,12 @@ export async function assignIncidentTo(id, { deptId, deptName, unitId, unitName,
     assignedUnitId: unitId || null,
     assignedAt: serverTimestamp(),
     assignedBy: adminEmail || null,
-    status: 'asignado',
   });
 }
 
-/* =========================================================
- * DEPARTMENTS / UNITS  (Catálogo real Medellín/Colombia)
- * =======================================================*/
-
-/**
- * Catálogo base (se "siembra" en Firestore si está vacío)
- * Ids estables, nombres visibles en UI
- */
+/* =========================
+ * DEPARTMENTS / UNITS (seed)
+ * ========================= */
 const DEFAULT_DEPARTMENTS = [
   {
     id: 'aseo_emvarias',
@@ -213,13 +258,11 @@ const DEFAULT_DEPARTMENTS = [
   },
 ];
 
-/** Semilla inicial si /departments está vacío */
 async function seedDepartmentsIfEmpty() {
   const colRef = collection(db, 'departments');
   const snap = await getDocs(colRef);
   if (!snap.empty) return;
 
-  // Crear docs de departamentos + subcolección de units
   await Promise.all(
     DEFAULT_DEPARTMENTS.map(async (dept) => {
       await setDoc(doc(db, 'departments', dept.id), {
@@ -241,7 +284,6 @@ async function seedDepartmentsIfEmpty() {
   );
 }
 
-/** Obtener departamentos (si está vacío, siembra) */
 export async function getDepartments() {
   await seedDepartmentsIfEmpty();
   const colRef = collection(db, 'departments');
@@ -249,17 +291,13 @@ export async function getDepartments() {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
-/** Obtener unidades por departamento (si está vacío, usa defaults del catálogo) */
 export async function getUnitsByDepartment(deptId) {
   if (!deptId) return [];
   const colRef = collection(db, 'departments', deptId, 'units');
   const snap = await getDocs(colRef);
-
   if (!snap.empty) {
     return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
   }
-
-  // Si la subcolección está vacía pero el dept es de los default, crea defaults
   const match = DEFAULT_DEPARTMENTS.find((d) => d.id === deptId);
   if (match && Array.isArray(match.defaultUnits)) {
     await Promise.all(
@@ -270,10 +308,77 @@ export async function getUnitsByDepartment(deptId) {
         })
       )
     );
-    // leer nuevamente
     const snap2 = await getDocs(colRef);
     return snap2.docs.map((d) => ({ id: d.id, ...d.data() }));
   }
-
   return [];
+}
+
+/* =========================
+ * CATEGORIES (seed + fetch idempotente)
+ * ========================= */
+const DEFAULT_CATEGORIES = [
+  { id: 'Agua', name: 'Agua', subs: ['Aguas negras', 'Fuga', 'Inundación', 'Acueducto dañado'] },
+  { id: 'Basura_y_residuos', name: 'Basura y residuos', subs: ['Acumulación', 'Punto crítico', 'Reciclaje'] },
+  { id: 'Arboles_y_zonas_verdes', name: 'Árboles y zonas verdes', subs: ['Árbol caído', 'Poda', 'Zona verde abandonada'] },
+  { id: 'Vias_Transito', name: 'Vías / Tránsito', subs: ['Huecos', 'Señalización', 'Semáforos'] },
+  {
+    id: 'Ruido_y_Contaminacion',
+    name: 'Ruido y Contaminación',
+    subs: ['Ruido urbano', 'Comercial', 'Obra', 'Vehicular', 'Eventos', 'Calidad del aire', 'Olores ofensivos'],
+  },
+];
+
+function toDocId(str) {
+  return String(str)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, '_')
+    .replace(/[^\w\-]/g, '')
+    .toLowerCase();
+}
+
+async function seedCategoriesEnsureDefaults() {
+  for (const cat of DEFAULT_CATEGORIES) {
+    const catId = cat.id || toDocId(cat.name);
+    await setDoc(
+      doc(db, 'categories', catId),
+      {
+        name: cat.name,
+        updatedAt: serverTimestamp(),
+        order: 0,
+      },
+      { merge: true }
+    );
+
+    for (const sub of cat.subs || []) {
+      const subId = toDocId(sub);
+      await setDoc(
+        doc(db, 'categories', catId, 'subcategories', subId),
+        {
+          name: sub,
+          updatedAt: serverTimestamp(),
+          order: 0,
+        },
+        { merge: true }
+      );
+    }
+  }
+}
+
+export async function getCategoriesWithSubs() {
+  await seedCategoriesEnsureDefaults();
+  const out = [];
+  const catSnap = await getDocs(collection(db, 'categories'));
+  for (const c of catSnap.docs) {
+    const subsSnap = await getDocs(collection(db, 'categories', c.id, 'subcategories'));
+    out.push({
+      id: c.id,
+      name: c.data().name,
+      subs: subsSnap.docs.map((d) => ({ id: d.id, name: d.data().name })),
+    });
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  out.forEach((c) => c.subs.sort((a, b) => a.name.localeCompare(b.name)));
+  return out;
 }

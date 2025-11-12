@@ -1,5 +1,5 @@
 // src/views/ReportScreen.jsx
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -8,11 +8,13 @@ import {
   ActivityIndicator,
   StyleSheet,
   ScrollView,
+  Alert,
 } from 'react-native';
 import MapView, { Marker } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
 import colors from '../theme/colors';
 import useReportViewModel from '../viewmodels/useReportViewModel';
+import { getCategoriesWithSubs } from '../services/firestoreService';
 
 export default function ReportScreen({ navigation }) {
   const vm = useReportViewModel({ navigation });
@@ -32,38 +34,31 @@ export default function ReportScreen({ navigation }) {
     submit,
   } = vm;
 
-  // categorías que vamos a mostrar (puedes cambiar nombres)
-  const categories = [
-    {
-      id: 'waste',
-      name: 'Basura',
-      icon: 'trash-outline',
-      subcategories: ['Bolsa rota', 'Escombros', 'Contenedor lleno', 'Quema'],
-    },
-    {
-      id: 'green',
-      name: 'Áreas verdes',
-      icon: 'leaf-outline',
-      subcategories: ['Árbol caído', 'Poda requerida', 'Daño en parque', 'Riesgo en árbol'],
-    },
-    {
-      id: 'water',
-      name: 'Agua',
-      icon: 'water-outline',
-      subcategories: ['Fuga', 'Inundación', 'Aguas negras', 'Charco permanente'],
-    },
-    {
-      id: 'noise',
-      name: 'Ruido',
-      icon: 'volume-high-outline',
-      subcategories: ['Comercio', 'Obra', 'Vehículos', 'Fiesta'],
-    },
-  ];
+  // === Catálogo desde Firestore ===
+  const [categories, setCategories] = useState([]); // [{id,name,subs:[{id,name}]}]
+  const [catLoading, setCatLoading] = useState(true);
 
-  const selectedCategory = categories.find(
-    (c) => c.name === incident.category
-  );
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await getCategoriesWithSubs();
+        setCategories(data);
+      } catch (e) {
+        console.error('getCategoriesWithSubs()', e);
+        Alert.alert('Error', 'No fue posible cargar categorías.');
+      } finally {
+        setCatLoading(false);
+      }
+    })();
+  }, []);
 
+  // Subcategorías según lo que esté seleccionado por nombre
+  const subOptions = useMemo(() => {
+    const cat = categories.find((c) => c.name === incident.category);
+    return cat?.subs || [];
+  }, [categories, incident.category]);
+
+  // UI
   const loc = incident.location;
   const hasCoords =
     loc &&
@@ -76,6 +71,17 @@ export default function ReportScreen({ navigation }) {
     ? 'Ubicación establecida'
     : 'Ubicación no establecida';
 
+  // Icono por categoría (fallback si en Firestore no hay iconos)
+  function getIconForCategory(catName) {
+    const n = (catName || '').toLowerCase();
+    if (n.includes('basura')) return 'trash-outline';
+    if (n.includes('verde') || n.includes('árbol') || n.includes('arbol')) return 'leaf-outline';
+    if (n.includes('agua')) return 'water-outline';
+    if (n.includes('ruido')) return 'volume-high-outline';
+    if (n.includes('tránsito') || n.includes('transito') || n.includes('vías') || n.includes('vias')) return 'navigate-outline';
+    return 'alert-circle-outline';
+  }
+
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.title}>Nuevo reporte</Text>
@@ -83,64 +89,85 @@ export default function ReportScreen({ navigation }) {
         Selecciona el tipo de problema y agrega evidencia
       </Text>
 
-      {/* CATEGORÍAS */}
+      {/* CATEGORÍAS (de Firestore) */}
       <Text style={styles.label}>Categoría</Text>
-      <View style={styles.categoriesRow}>
-        {categories.map((cat) => {
-          const isSelected = incident.category === cat.name;
-          return (
-            <TouchableOpacity
-              key={cat.id}
-              style={[styles.categoryItem, isSelected && styles.categoryItemActive]}
-              onPress={() => updateCategory(cat.name)}
-            >
-              <Ionicons
-                name={cat.icon}
-                size={22}
-                color={isSelected ? '#fff' : colors.primary}
-                style={{ marginBottom: 4 }}
-              />
-              <Text
-                style={[
-                  styles.categoryText,
-                  isSelected && { color: '#fff' },
-                ]}
+      {catLoading ? (
+        <View style={[styles.categoriesRow, { paddingVertical: 6 }]}>
+          <ActivityIndicator />
+        </View>
+      ) : (
+        <View style={styles.categoriesRow}>
+          {categories.map((cat) => {
+            const isSelected = incident.category === cat.name;
+            return (
+              <TouchableOpacity
+                key={cat.id}
+                style={[styles.categoryItem, isSelected && styles.categoryItemActive]}
+                onPress={() => {
+                  // si cambia de categoría y sub no pertenece, el VM ya debería limpiar; por si acaso:
+                  if (incident.category !== cat.name) updateSubcategory('');
+                  updateCategory(cat.name); // trabajamos por nombre igual que en Admin
+                }}
               >
-                {cat.name}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+                <Ionicons
+                  name={getIconForCategory(cat.name)}
+                  size={22}
+                  color={isSelected ? '#fff' : colors.primary}
+                  style={{ marginBottom: 4 }}
+                />
+                <Text
+                  style={[
+                    styles.categoryText,
+                    isSelected && { color: '#fff' },
+                  ]}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  {cat.name}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
 
-      {/* SUBCATEGORÍAS (solo de la seleccionada) */}
-      {selectedCategory ? (
+      {/* SUBCATEGORÍAS (según categoría seleccionada) */}
+      {incident.category ? (
         <>
           <Text style={styles.label}>Detalle</Text>
-          <View style={styles.subcategoriesRow}>
-            {selectedCategory.subcategories.map((sub) => {
-              const isSelected = incident.subcategory === sub;
-              return (
-                <TouchableOpacity
-                  key={sub}
-                  style={[
-                    styles.subcategoryItem,
-                    isSelected && styles.subcategoryItemActive,
-                  ]}
-                  onPress={() => updateSubcategory(sub)}
-                >
-                  <Text
+          {subOptions.length ? (
+            <View style={styles.subcategoriesRow}>
+              {subOptions.map((sub) => {
+                const label = sub.name; // en Firestore {id,name}
+                const isSelected = incident.subcategory === label;
+                return (
+                  <TouchableOpacity
+                    key={sub.id}
                     style={[
-                      styles.subcategoryText,
-                      isSelected && { color: '#fff' },
+                      styles.subcategoryItem,
+                      isSelected && styles.subcategoryItemActive,
                     ]}
+                    onPress={() => updateSubcategory(label)}
                   >
-                    {sub}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+                    <Text
+                      style={[
+                        styles.subcategoryText,
+                        isSelected && { color: '#fff' },
+                      ]}
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                    >
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          ) : (
+            <Text style={{ color: colors.muted, marginBottom: 8 }}>
+              No hay subcategorías configuradas para esta categoría.
+            </Text>
+          )}
         </>
       ) : null}
 
@@ -269,7 +296,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 12,
     alignItems: 'center',
-    minWidth: 90,
+    minWidth: 110,
   },
   categoryItemActive: {
     backgroundColor: colors.primary,
