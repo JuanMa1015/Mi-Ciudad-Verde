@@ -1,234 +1,342 @@
 // src/views/ReportDetailScreen.jsx
-import React from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  Image,
-  TouchableOpacity,
-  Dimensions,
-} from 'react-native';
-import { Video } from 'expo-av';
-import { Ionicons } from '@expo/vector-icons';
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, Text, Image, StyleSheet, ActivityIndicator, ScrollView } from 'react-native';
+import MapView, { Marker } from 'react-native-maps';
 import colors from '../theme/colors';
 
-const { width } = Dimensions.get('window');
+// Firestore (fallback cuando solo llega el id)
+import { getFirestore, doc, getDoc } from 'firebase/firestore';
+import { app } from '../services/firebase/app';
 
-export default function ReportDetailScreen({ route, navigation }) {
-  const incident = route?.params?.incident || {};
+const db = getFirestore(app);
 
-  // normalizar categoría / subcategoría
-  let category = incident.category || '';
-  let subcategory = incident.subcategory || '';
+function formatDate(createdAt) {
+  if (!createdAt) return '';
+  const ms =
+    typeof createdAt === 'number'
+      ? createdAt
+      : createdAt?.toMillis?.() ?? (createdAt?.seconds ? createdAt.seconds * 1000 : null);
+  return ms ? new Date(ms).toLocaleString() : '';
+}
 
-  if ((!category || !subcategory) && typeof incident.description === 'string') {
-    const parts = incident.description.split(' - ');
-    if (!category && parts[0]) category = parts[0];
-    if (!subcategory && parts[1]) subcategory = parts[1];
-  }
-  if (!category) category = 'No especificada';
-  if (!subcategory) subcategory = '—';
+function StatusPill({ value = 'nuevo' }) {
+  const map = {
+    nuevo:   { bg: '#EEF2FF', text: '#3730A3', border: '#C7D2FE' },
+    en_proceso: { bg: '#E0F2FE', text: '#075985', border: '#BAE6FD' },
+    resuelto:   { bg: '#DCFCE7', text: '#166534', border: '#BBF7D0' },
+    rechazado:  { bg: '#FEE2E2', text: '#991B1B', border: '#FECACA' },
+  };
+  const c = map[value] || map.nuevo;
+  return (
+    <View style={[styles.pill, { backgroundColor: c.bg, borderColor: c.border }]}>
+      <Text style={[styles.pillText, { color: c.text }]}>{value}</Text>
+    </View>
+  );
+}
 
-  // normalizar fotos
-  let photoUrls = [];
-  if (Array.isArray(incident.photoUrls)) {
-    photoUrls = incident.photoUrls;
-  } else if (typeof incident.photoUrls === 'string') {
-    try {
-      const arr = JSON.parse(incident.photoUrls);
-      if (Array.isArray(arr)) photoUrls = arr;
-    } catch {}
-  }
-  if (incident.photoUrl && !photoUrls.length) {
-    photoUrls = [incident.photoUrl];
-  }
+function Chip({ children }) {
+  return (
+    <View style={styles.chip}>
+      <Text style={styles.chipText}>{children}</Text>
+    </View>
+  );
+}
 
-  // normalizar videos
-  let videoUrls = [];
-  if (Array.isArray(incident.videoUrls)) {
-    videoUrls = incident.videoUrls;
-  } else if (typeof incident.videoUrls === 'string') {
-    try {
-      const arr = JSON.parse(incident.videoUrls);
-      if (Array.isArray(arr)) videoUrls = arr;
-    } catch {}
-  }
+export default function ReportDetailScreen({ route }) {
+  // Acepta multiple naming para no romper flujos antiguos
+  const param =
+    route?.params?.incident ??
+    route?.params?.item ??
+    route?.params?.report ??
+    null;
+  const initialId = route?.params?.id ?? param?.id ?? null;
 
-  const description = incident.description || 'Sin descripción';
-  const address = incident.address || 'Dirección aproximada no disponible';
-  const author = incident.userEmail || 'Usuario no identificado';
+  const [docData, setDocData] = useState(param || null);
+  const [loading, setLoading] = useState(!param && !!initialId);
 
-  // fecha
-  let createdAtText = 'Fecha no disponible';
-  if (incident.createdAt) {
-    if (incident.createdAt.seconds) {
-      createdAtText = new Date(incident.createdAt.seconds * 1000).toLocaleString();
-    } else {
-      const d = new Date(incident.createdAt);
-      if (!isNaN(d.getTime())) {
-        createdAtText = d.toLocaleString();
+  useEffect(() => {
+    let mounted = true;
+    async function fetchIfNeeded() {
+      if (docData || !initialId) return;
+      try {
+        setLoading(true);
+        const snap = await getDoc(doc(db, 'incidents', initialId));
+        if (!mounted) return;
+        if (snap.exists()) setDocData({ id: snap.id, ...snap.data() });
+        else setDocData(null);
+      } catch (e) {
+        console.error('ReportDetailScreen getDoc()', e);
+        setDocData(null);
+      } finally {
+        if (mounted) setLoading(false);
       }
     }
+    fetchIfNeeded();
+    return () => { mounted = false; };
+  }, [initialId, docData]);
+
+  const data = docData || {};
+  const {
+    description,
+    address,
+    photoUrl,
+    photoUrls = [],
+    location,
+    category,
+    subcategory,
+    userEmail,
+    userId,
+    status = 'nuevo',
+    assignedDept,
+    assignedUnit,
+    createdAt,
+  } = data;
+
+  const hasCoords =
+    location &&
+    typeof location.latitude === 'number' &&
+    typeof location.longitude === 'number';
+
+  const allPhotos = useMemo(() => {
+    const urls = [];
+    if (typeof photoUrl === 'string' && photoUrl.trim()) urls.push(photoUrl.trim());
+    if (Array.isArray(photoUrls)) {
+      photoUrls.forEach((u) => {
+        if (typeof u === 'string' && u.trim() && !urls.includes(u.trim())) urls.push(u.trim());
+      });
+    }
+    return urls;
+  }, [photoUrl, photoUrls]);
+
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={{ marginTop: 8, color: colors.muted }}>Cargando reporte…</Text>
+      </View>
+    );
+  }
+
+  if (!docData && !param) {
+    return (
+      <View style={styles.center}>
+        <Text style={{ color: colors.muted }}>Reporte no encontrado.</Text>
+      </View>
+    );
   }
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={{ paddingBottom: 40 }}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={22} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Detalles del reporte</Text>
-        <View style={{ width: 22 }} />
+    <ScrollView contentContainerStyle={styles.container}>
+      {/* ===== Header ===== */}
+      <View style={styles.headerCard}>
+        <View style={styles.headerRow}>
+          <Text style={styles.title}>
+            {category || 'Sin categoría'}
+            {subcategory ? ` · ${subcategory}` : ''}
+          </Text>
+          <StatusPill value={status} />
+        </View>
+        <Text style={styles.dateText}>
+          {formatDate(createdAt) || 'Fecha no especificada'}
+        </Text>
+        <View style={styles.headerChips}>
+          {category ? <Chip>{category}</Chip> : null}
+          {subcategory ? <Chip>{subcategory}</Chip> : null}
+        </View>
       </View>
 
-      {/* Card principal */}
-      <View style={styles.card}>
-        <Text style={styles.title}>{description}</Text>
-
-        <View style={styles.row}>
-          <Ionicons name="location" size={16} color="#EF4444" style={styles.rowIcon} />
-          <Text style={styles.rowText}>{address}</Text>
-        </View>
-
-        <View style={styles.row}>
-          <Ionicons name="pricetag" size={16} color="#F59E0B" style={styles.rowIcon} />
-          <Text style={styles.rowText}>Categoría: {category}</Text>
-        </View>
-
-        <View style={styles.row}>
-          <Ionicons name="flag" size={16} color="#DC2626" style={styles.rowIcon} />
-          <Text style={styles.rowText}>Subcategoría: {subcategory}</Text>
-        </View>
-
-        <View style={styles.row}>
-          <Ionicons name="person" size={16} color="#3B82F6" style={styles.rowIcon} />
-          <Text style={styles.rowText}>Reportado por: {author}</Text>
-        </View>
-
-        <View style={styles.row}>
-          <Ionicons name="time" size={16} color="#10B981" style={styles.rowIcon} />
-          <Text style={styles.rowText}>{createdAtText}</Text>
-        </View>
-
-        {(photoUrls.length > 0 || videoUrls.length > 0) && (
-          <View style={[styles.badge, { marginTop: 10 }]}>
-            <Ionicons name="information-circle" size={16} color={colors.primary} />
-            <Text style={styles.badgeText}>
-              Este reporte tiene
-              {photoUrls.length > 0
-                ? ` ${photoUrls.length} foto${photoUrls.length > 1 ? 's' : ''}`
-                : ''}
-              {photoUrls.length > 0 && videoUrls.length > 0 ? ' y' : ''}
-              {videoUrls.length > 0
-                ? ` ${videoUrls.length} video${videoUrls.length > 1 ? 's' : ''}`
-                : ''}
-            </Text>
-          </View>
-        )}
-      </View>
-
-      {/* Fotos */}
-      {photoUrls.length > 0 && (
-        <View style={styles.mediaBlock}>
-          <Text style={styles.sectionTitle}>Fotos</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {photoUrls.map((uri, idx) => (
-              <Image key={idx} source={{ uri }} style={styles.photo} />
+      {/* ===== Fotos ===== */}
+      {allPhotos.length > 0 ? (
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Evidencia</Text>
+          <View style={styles.divider} />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 10 }}>
+            {allPhotos.map((u) => (
+              <Image key={u} source={{ uri: u }} style={styles.photo} />
             ))}
           </ScrollView>
         </View>
-      )}
+      ) : null}
 
-      {/* Videos */}
-      {videoUrls.length > 0 && (
-        <View style={styles.mediaBlock}>
-          <Text style={styles.sectionTitle}>Videos</Text>
-          {videoUrls.map((uri, idx) => (
-            <View key={idx} style={{ marginBottom: 12 }}>
-              <Video
-                source={{ uri }}
-                style={styles.video}
-                useNativeControls
-                resizeMode="cover"
-              />
-            </View>
-          ))}
+      {/* ===== Descripción ===== */}
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Descripción</Text>
+        <View style={styles.divider} />
+        <Text style={styles.body}>{description || 'No especificada'}</Text>
+      </View>
+
+      {/* ===== Ubicación ===== */}
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Ubicación</Text>
+        <View style={styles.divider} />
+        <Text style={styles.body}>
+          {address || (hasCoords ? 'Ubicación establecida' : 'No especificada')}
+        </Text>
+
+        {hasCoords ? (
+          <View style={styles.mapWrapper}>
+            <MapView
+              style={styles.map}
+              pointerEvents="none"
+              initialRegion={{
+                latitude: location.latitude,
+                longitude: location.longitude,
+                latitudeDelta: 0.005,
+                longitudeDelta: 0.005,
+              }}
+            >
+              <Marker coordinate={location} title={address || 'Ubicación'} />
+            </MapView>
+          </View>
+        ) : null}
+      </View>
+
+      {/* ===== Asignación / Estado ===== */}
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Gestión</Text>
+        <View style={styles.divider} />
+
+        <View style={styles.metaGrid}>
+          <View style={styles.metaItem}>
+            <Text style={styles.metaLabel}>Estado</Text>
+            <Text style={styles.metaValue}>{status || 'nuevo'}</Text>
+          </View>
+
+          <View style={styles.metaItem}>
+            <Text style={styles.metaLabel}>Departamento</Text>
+            <Text style={styles.metaValue}>{assignedDept || '—'}</Text>
+          </View>
+
+          <View style={styles.metaItem}>
+            <Text style={styles.metaLabel}>Unidad</Text>
+            <Text style={styles.metaValue}>{assignedUnit || '—'}</Text>
+          </View>
         </View>
-      )}
+      </View>
 
-      <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-        <Ionicons name="arrow-back" size={18} color="#fff" />
-        <Text style={styles.backText}>Volver</Text>
-      </TouchableOpacity>
+      {/* ===== Autor ===== */}
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Autor</Text>
+        <View style={styles.divider} />
+
+        <View style={styles.metaGrid}>
+          <View style={styles.metaItem}>
+            <Text style={styles.metaLabel}>Email</Text>
+            <Text style={styles.metaValue}>{userEmail || '—'}</Text>
+          </View>
+
+          <View style={styles.metaItem}>
+            <Text style={styles.metaLabel}>User ID</Text>
+            <Text style={styles.metaValueMono}>{userId || '—'}</Text>
+          </View>
+        </View>
+      </View>
+
+      <View style={{ height: 16 }} />
     </ScrollView>
   );
 }
 
+const shadow = {
+  shadowColor: '#000',
+  shadowOpacity: 0.06,
+  shadowRadius: 12,
+  shadowOffset: { width: 0, height: 6 },
+  elevation: 2,
+};
+
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#E8F4EB' },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 6,
-  },
-  headerTitle: {
-    flex: 1,
-    textAlign: 'center',
-    fontWeight: '700',
-    fontSize: 18,
-    color: colors.text,
-  },
-  card: {
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
+
+  container: { padding: 16, backgroundColor: colors.bg },
+
+  /* Header */
+  headerCard: {
     backgroundColor: '#fff',
-    margin: 16,
     borderRadius: 16,
     padding: 16,
     borderWidth: 1,
     borderColor: '#E5E7EB',
+    ...shadow,
   },
-  title: { fontSize: 16, fontWeight: '700', color: colors.text, marginBottom: 10 },
-  row: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 6 },
-  rowIcon: { marginRight: 6, marginTop: 2 },
-  rowText: { flex: 1, color: colors.text },
-  badge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#DCFCE7',
-    borderRadius: 999,
-    paddingHorizontal: 14,
+  headerRow: { flexDirection: 'row', alignItems: 'center' },
+  title: { flex: 1, fontSize: 20, fontWeight: '800', color: colors.text, marginRight: 8 },
+  dateText: { color: colors.muted, marginTop: 6 },
+  headerChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+
+  /* Chips / Pills */
+  chip: {
+    backgroundColor: '#F3FFF4',
+    borderWidth: 1,
+    borderColor: '#BAF7C2',
+    paddingHorizontal: 10,
     paddingVertical: 6,
-    alignSelf: 'flex-start',
-    gap: 6,
-  },
-  badgeText: { color: '#166534', fontWeight: '500' },
-  mediaBlock: { marginHorizontal: 16, marginTop: 4 },
-  sectionTitle: { fontWeight: '700', color: colors.text, marginBottom: 8 },
-  photo: {
-    width: width * 0.6,
-    height: 160,
-    borderRadius: 14,
-    marginRight: 10,
-    backgroundColor: '#f3f4f6',
-  },
-  video: {
-    width: '100%',
-    height: 200,
-    borderRadius: 14,
-    backgroundColor: '#000',
-  },
-  backBtn: {
-    flexDirection: 'row',
-    backgroundColor: colors.primary,
-    margin: 16,
     borderRadius: 999,
-    paddingVertical: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 6,
   },
-  backText: { color: '#fff', fontWeight: '700' },
+  chipText: { color: colors.text, fontWeight: '700', fontSize: 12 },
+
+  pill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  pillText: { fontWeight: '800', fontSize: 12 },
+
+  /* Tarjetas de sección */
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    ...shadow,
+  },
+  sectionTitle: { fontSize: 15, fontWeight: '800', color: colors.text },
+  divider: { height: 1, backgroundColor: '#EEF2F7', marginTop: 8, marginBottom: 10 },
+
+  body: { color: colors.text, lineHeight: 20 },
+
+  /* Fotos */
+  photo: {
+    width: 240,
+    height: 150,
+    borderRadius: 12,
+    marginRight: 10,
+    backgroundColor: '#F3F4F6',
+  },
+
+  /* Mapa */
+  mapWrapper: {
+    height: 180,
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#fff',
+  },
+  map: { flex: 1 },
+
+  /* Meta en grilla */
+  metaGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    columnGap: 16,
+    rowGap: 12,
+    marginTop: 4,
+  },
+  metaItem: {
+    minWidth: '45%',
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  metaLabel: { color: '#6B7280', fontWeight: '700', marginBottom: 6, fontSize: 12, letterSpacing: 0.2 },
+  metaValue: { color: colors.text, fontWeight: '800' },
+  metaValueMono: { color: colors.text, fontWeight: '800', fontFamily: 'System', letterSpacing: 0.3 },
 });

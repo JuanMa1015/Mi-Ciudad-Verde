@@ -315,7 +315,7 @@ export async function getUnitsByDepartment(deptId) {
 }
 
 /* =========================
- * CATEGORIES (seed + fetch idempotente)
+ * CATEGORIES (seed + fetch idempotente + DEDUPE + CACHE)
  * ========================= */
 const DEFAULT_CATEGORIES = [
   { id: 'Agua', name: 'Agua', subs: ['Aguas negras', 'Fuga', 'Inundación', 'Acueducto dañado'] },
@@ -343,42 +343,99 @@ async function seedCategoriesEnsureDefaults() {
     const catId = cat.id || toDocId(cat.name);
     await setDoc(
       doc(db, 'categories', catId),
-      {
-        name: cat.name,
-        updatedAt: serverTimestamp(),
-        order: 0,
-      },
+      { name: cat.name, updatedAt: serverTimestamp(), order: 0 },
       { merge: true }
     );
-
     for (const sub of cat.subs || []) {
       const subId = toDocId(sub);
       await setDoc(
         doc(db, 'categories', catId, 'subcategories', subId),
-        {
-          name: sub,
-          updatedAt: serverTimestamp(),
-          order: 0,
-        },
+        { name: sub, updatedAt: serverTimestamp(), order: 0 },
         { merge: true }
       );
     }
   }
 }
 
-export async function getCategoriesWithSubs() {
-  await seedCategoriesEnsureDefaults();
-  const out = [];
-  const catSnap = await getDocs(collection(db, 'categories'));
-  for (const c of catSnap.docs) {
-    const subsSnap = await getDocs(collection(db, 'categories', c.id, 'subcategories'));
-    out.push({
-      id: c.id,
-      name: c.data().name,
-      subs: subsSnap.docs.map((d) => ({ id: d.id, name: d.data().name })),
-    });
+/* Helpers de normalización/dedupe */
+function normKey(s) {
+  return String(s || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function normalizeAndDedupeCategories(raw) {
+  const catMap = new Map(); // key: normName, val: { id, name, subs: Map }
+  for (const c of raw) {
+    const name = String(c?.name || 'Sin categoría').trim();
+    const norm = normKey(name);
+    const current = catMap.get(norm) || { id: c.id, name, subs: new Map() };
+
+    for (const s of c.subs || []) {
+      const sName = String(s?.name || '').trim();
+      if (!sName) continue;
+      const sNorm = normKey(sName);
+      if (!current.subs.has(sNorm)) {
+        current.subs.set(sNorm, { id: s.id || sNorm, name: sName });
+      }
+    }
+
+    if (!catMap.has(norm)) current.id = c.id;
+    catMap.set(norm, current);
   }
-  out.sort((a, b) => a.name.localeCompare(b.name));
-  out.forEach((c) => c.subs.sort((a, b) => a.name.localeCompare(b.name)));
+
+  const out = Array.from(catMap.values()).map((c) => {
+    const subs = Array.from(c.subs.values()).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    return { id: c.id, name: c.name, subs };
+  });
+  out.sort((a, b) => a.name.localeCompare(b.name, 'es'));
   return out;
+}
+
+/* Cache en memoria */
+let _catCache = null;          // { data, at:number }
+let _catCachePromise = null;   // evita lecturas paralelas
+const CAT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
+
+export function invalidateCategoriesCache() {
+  _catCache = null;
+  _catCachePromise = null;
+}
+
+export async function getCategoriesWithSubs() {
+  if (_catCache && Date.now() - _catCache.at < CAT_CACHE_TTL_MS) {
+    return _catCache.data;
+  }
+  if (_catCachePromise) return _catCachePromise;
+
+  _catCachePromise = (async () => {
+    await seedCategoriesEnsureDefaults();
+
+    const catSnap = await getDocs(collection(db, 'categories'));
+    const raw = [];
+
+    for (const c of catSnap.docs) {
+      const subsSnap = await getDocs(collection(db, 'categories', c.id, 'subcategories'));
+      raw.push({
+        id: c.id,
+        name: c.data()?.name ?? '',
+        subs: subsSnap.docs.map((d) => ({ id: d.id, name: d.data()?.name ?? '' })),
+      });
+    }
+
+    const cleaned = normalizeAndDedupeCategories(raw);
+
+    _catCache = { data: cleaned, at: Date.now() };
+    _catCachePromise = null;
+    return cleaned;
+  })();
+
+  try {
+    return await _catCachePromise;
+  } catch (e) {
+    _catCachePromise = null;
+    throw e;
+  }
 }
