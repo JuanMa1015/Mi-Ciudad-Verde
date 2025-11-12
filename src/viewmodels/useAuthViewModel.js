@@ -1,32 +1,23 @@
-import { useState, useEffect, useCallback } from 'react';
+// src/viewmodels/useAuthViewModel.js
+import { useState, useCallback } from 'react';
 import { Alert } from 'react-native';
-import { register, login, subscribeToAuth, logout } from '../services/authService';
-import { log } from '../services/logger';
+import { register, login, logout } from '../services/authService';
 
-export default function useAuthViewModel({ navigation }) {
+export default function useAuthViewModel() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-
-  // Escucha cambios de autenticación
-  useEffect(() => {
-    const unsub = subscribeToAuth((user) => {
-      if (user) {
-        log('Auth: usuario activo →', user.email);
-        navigation.reset({ index: 0, routes: [{ name: 'Main' }] });
-      }
-    });
-    return unsub;
-  }, [navigation]);
 
   const signIn = useCallback(async () => {
     if (!email || !password) return Alert.alert('Campos vacíos', 'Ingresa correo y contraseña.');
     setLoading(true);
     try {
       await login(email.trim(), password.trim());
+      // No navegamos: el RootNavigator cambia solo según user/role.
     } catch (e) {
       console.error('[signIn]', e);
+      setErrorMsg(e.message || 'No fue posible iniciar sesión.');
       Alert.alert('Error', e.message || 'No fue posible iniciar sesión.');
     } finally {
       setLoading(false);
@@ -39,8 +30,10 @@ export default function useAuthViewModel({ navigation }) {
     try {
       await register(email.trim(), password.trim());
       Alert.alert('Cuenta creada', 'Tu cuenta fue registrada correctamente.');
+      // Tampoco navegamos aquí.
     } catch (e) {
       console.error('[signUp]', e);
+      setErrorMsg(e.message || 'No fue posible registrarte.');
       Alert.alert('Error', e.message || 'No fue posible registrarte.');
     } finally {
       setLoading(false);
@@ -49,18 +42,13 @@ export default function useAuthViewModel({ navigation }) {
 
   const handleLogout = useCallback(async () => {
     await logout();
-    navigation.replace('Auth');
-  }, [navigation]);
+    // Nada de navigation.replace('Auth'); el Root te lleva.
+  }, []);
 
   return {
-    email,
-    setEmail,
-    password,
-    setPassword,
-    loading,
-    errorMsg,
-    signIn,
-    signUp,
-    handleLogout,
+    email, setEmail,
+    password, setPassword,
+    loading, errorMsg,
+    signIn, signUp, handleLogout,
   };
 }

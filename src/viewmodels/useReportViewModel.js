@@ -5,6 +5,9 @@ import { currentUser } from '../services/authService';
 import { getCurrentCoords, reverseGeocode } from '../services/locationService';
 import { saveReport } from '../services/firestoreService';
 import { takePhoto, pickImage, pickVideo } from '../services/mediaService';
+import NetInfo from '@react-native-community/netinfo';
+import { queueReportOffline } from '../services/offlineQueueService';
+
 
 export default function useReportViewModel({ navigation }) {
   const [incident, setIncident] = useState({
@@ -123,39 +126,51 @@ export default function useReportViewModel({ navigation }) {
 
   // ---- enviar ----
   const submit = async () => {
-    // validación mínima: categoría
-    if (!incident.category) {
-      Alert.alert('Falta categoría', 'Selecciona una categoría.');
-      return;
-    }
+  if (!incident.description) {
+    Alert.alert('Falta info', 'Selecciona al menos una categoría.');
+    return;
+  }
+  setSubmitting(true);
 
-    setSubmitting(true);
-    try {
-      const user = currentUser();
+  try {
+    const user = currentUser();
 
-      await saveReport({
-        description: incident.description || incident.category,
-        category: incident.category || '',
-        subcategory: incident.subcategory || '',
-        address: incident.address || '',
-        location: incident.location || null,
-        // compat con lo viejo
-        photoUrl: incident.photos[0]?.uri || '',
-        photoUrls: incident.photos.map((p) => p.uri),
-        videoUrls: incident.videos.map((v) => v.uri),
-        userId: user?.uid || null,
-        userEmail: user?.email || null,
-      });
+    const reportPayload = {
+      description: incident.description,
+      address: incident.address || '',
+      location: incident.location || null,
+      photoUrl: incident.photos[0]?.uri || '',
+      photoUrls: incident.photos.map((p) => p.uri),
+      videoUrls: incident.videos.map((v) => v.uri),
+      category: incident.category || '',
+      subcategory: incident.subcategory || '',
+      userId: user?.uid || null,
+      userEmail: user?.email || null,
+      createdAt: Date.now(),
+    };
 
+    const net = await NetInfo.fetch();
+
+    if (net.isConnected) {
+      await saveReport(reportPayload);
       Alert.alert('Listo', 'Reporte enviado.');
-      navigation.goBack?.();
-    } catch (e) {
-      console.log('[SUBMIT ERROR]', e);
-      Alert.alert('Error', 'No se pudo guardar el reporte.');
-    } finally {
-      setSubmitting(false);
+    } else {
+      await queueReportOffline(reportPayload);
+      Alert.alert(
+        'Sin conexión',
+        'Tu reporte se guardó y se enviará automáticamente cuando recuperes conexión.'
+      );
     }
-  };
+
+    navigation.goBack?.();
+  } catch (e) {
+    console.log('[SUBMIT ERROR]', e);
+    Alert.alert('Error', 'No se pudo guardar el reporte.');
+  } finally {
+    setSubmitting(false);
+  }
+};
+
 
   return {
     incident,

@@ -8,33 +8,42 @@ export default function useMapViewModel() {
   const [incidents, setIncidents] = useState([]);
 
   useEffect(() => {
-    // nos suscribimos a TODOS
     const unsubscribe = subscribeIncidents({
       scope: 'all',
-      onData: (rows) => {
-        // Normalizamos un poquito por si algún doc viene viejo
-        const normalized = rows.map((d) => ({
-          id: d.id,
-          description: d.description || '',
-          address: d.address || '',
-          location: d.location || { latitude: 0, longitude: 0 },
-          photoUrl: d.photoUrl || '',
-          photoUrls: Array.isArray(d.photoUrls)
-            ? d.photoUrls
-            : d.photoUrls
-            ? [d.photoUrls]
-            : [],
-          videoUrls: Array.isArray(d.videoUrls)
-            ? d.videoUrls
-            : d.videoUrls
-            ? [d.videoUrls]
-            : [],
-          category: d.category || '',
-          subcategory: d.subcategory || '',
-          userEmail: d.userEmail || '',
-          userId: d.userId || '',
-          createdAt: d.createdAt ?? Date.now(),
-        }));
+      onData: (rows = []) => {
+        const normalized = rows.map((d) => {
+          const created =
+            d.createdAt?.toMillis?.() ??
+            (typeof d.createdAt === 'number' ? d.createdAt : Date.now());
+
+          return {
+            id: d.id,
+            description: d.description || '',
+            address: d.address || '',
+            location: d.location || { latitude: 0, longitude: 0 },
+
+            // compat viejo
+            photoUrl: d.photoUrl || '',
+
+            // arrays seguros
+            photoUrls: Array.isArray(d.photoUrls)
+              ? d.photoUrls
+              : d.photoUrls
+              ? [d.photoUrls]
+              : [],
+            videoUrls: Array.isArray(d.videoUrls)
+              ? d.videoUrls
+              : d.videoUrls
+              ? [d.videoUrls]
+              : [],
+
+            category: d.category || '',
+            subcategory: d.subcategory || '',
+            userEmail: d.userEmail || '',
+            userId: d.userId || '',
+            createdAt: created,
+          };
+        });
 
         setIncidents(normalized);
         setLoading(false);
@@ -46,9 +55,7 @@ export default function useMapViewModel() {
     });
 
     return () => {
-      if (typeof unsubscribe === 'function') {
-        unsubscribe();
-      }
+      if (typeof unsubscribe === 'function') unsubscribe();
     };
   }, []);
 

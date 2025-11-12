@@ -1,6 +1,6 @@
 // src/viewmodels/useReportsListViewModel.js
 import { useEffect, useState } from 'react';
-import { subscribeIncidents, getUserReports } from '../services/firestoreService';
+import { subscribeIncidents } from '../services/firestoreService';
 import { currentUser } from '../services/authService';
 
 /**
@@ -14,84 +14,67 @@ export default function useReportsListViewModel(scope = 'all') {
   useEffect(() => {
     let unsubscribe;
 
-    async function init() {
+    const init = async () => {
       setLoading(true);
       const user = currentUser();
 
-      // Si el usuario quiere ver solo los suyos
+      const baseOpts = {
+        onData: (rows = []) => {
+          const normalized = rows.map((d) => {
+            const created =
+              d.createdAt?.toMillis?.() ??
+              (typeof d.createdAt === 'number' ? d.createdAt : Date.now());
+
+            return {
+              id: d.id,
+              description: d.description || '',
+              address: d.address || '',
+              location: d.location || { latitude: 0, longitude: 0 },
+
+              photoUrl: d.photoUrl || '',
+              photoUrls: Array.isArray(d.photoUrls)
+                ? d.photoUrls
+                : d.photoUrls
+                ? [d.photoUrls]
+                : [],
+              videoUrls: Array.isArray(d.videoUrls)
+                ? d.videoUrls
+                : d.videoUrls
+                ? [d.videoUrls]
+                : [],
+
+              category: d.category || '',
+              subcategory: d.subcategory || '',
+              userEmail: d.userEmail || '',
+              userId: d.userId || '',
+              createdAt: created,
+            };
+          });
+
+          setIncidents(normalized);
+          setLoading(false);
+        },
+        onError: (err) => {
+          console.log('[List VM] snapshot error', err);
+          setLoading(false);
+        },
+      };
+
       if (scope === 'mine' && user?.uid) {
-        // suscripción realtime
+        // solo mis reportes
         unsubscribe = subscribeIncidents({
+          ...baseOpts,
           scope: 'mine',
           userId: user.uid,
-          onData: (rows) => {
-            const normalized = rows.map((d) => ({
-              id: d.id,
-              description: d.description || '',
-              address: d.address || '',
-              location: d.location || { latitude: 0, longitude: 0 },
-              photoUrl: d.photoUrl || '',
-              photoUrls: Array.isArray(d.photoUrls)
-                ? d.photoUrls
-                : d.photoUrls
-                ? [d.photoUrls]
-                : [],
-              videoUrls: Array.isArray(d.videoUrls)
-                ? d.videoUrls
-                : d.videoUrls
-                ? [d.videoUrls]
-                : [],
-              category: d.category || '',
-              subcategory: d.subcategory || '',
-              userEmail: d.userEmail || '',
-              userId: d.userId || '',
-              createdAt: d.createdAt ?? Date.now(),
-            }));
-            setIncidents(normalized);
-            setLoading(false);
-          },
-          onError: (err) => {
-            console.log('[List VM] snapshot error', err);
-            setLoading(false);
-          },
         });
       } else {
-        // Todos los reportes
+        // todos
         unsubscribe = subscribeIncidents({
+          ...baseOpts,
           scope: 'all',
-          onData: (rows) => {
-            const normalized = rows.map((d) => ({
-              id: d.id,
-              description: d.description || '',
-              address: d.address || '',
-              location: d.location || { latitude: 0, longitude: 0 },
-              photoUrl: d.photoUrl || '',
-              photoUrls: Array.isArray(d.photoUrls)
-                ? d.photoUrls
-                : d.photoUrls
-                ? [d.photoUrls]
-                : [],
-              videoUrls: Array.isArray(d.videoUrls)
-                ? d.videoUrls
-                : d.videoUrls
-                ? [d.videoUrls]
-                : [],
-              category: d.category || '',
-              subcategory: d.subcategory || '',
-              userEmail: d.userEmail || '',
-              userId: d.userId || '',
-              createdAt: d.createdAt ?? Date.now(),
-            }));
-            setIncidents(normalized);
-            setLoading(false);
-          },
-          onError: (err) => {
-            console.log('[List VM] snapshot error', err);
-            setLoading(false);
-          },
         });
       }
-    }
+    };
 
     init();
 

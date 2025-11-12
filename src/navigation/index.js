@@ -1,6 +1,6 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { TouchableOpacity, Text, ActivityIndicator, View } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+// src/navigation/index.js
+import React, { useMemo } from 'react';
+import { TouchableOpacity, Text, View } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,14 +11,15 @@ import ReportScreen from '../views/ReportScreen';
 import ReportDetailScreen from '../views/ReportDetailScreen';
 import AuthLoginScreen from '../views/AuthLoginScreen';
 import AuthRegisterScreen from '../views/AuthRegisterScreen';
+import AdminPanelScreen from '../views/AdminPanelScreen';
 
 import colors from '../theme/colors';
-import { subscribeToAuth, logout } from '../services/authService';
+import { logout } from '../services/authService';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
-/* Tabs: Mapa y Lista */
+/* ---------- Tabs de usuario normal ---------- */
 function MainTabs() {
   return (
     <Tab.Navigator
@@ -48,7 +49,7 @@ function MainTabs() {
   );
 }
 
-/* Header con título + subtítulo (usuario) */
+/* ---------- Header con nombre ---------- */
 function HeaderTitleWithUser({ user }) {
   const display = useMemo(() => {
     if (!user) return null;
@@ -58,56 +59,46 @@ function HeaderTitleWithUser({ user }) {
 
   return (
     <View>
-      <Text style={{ fontSize: 16, fontWeight: '800', color: colors.text }}>
-        Mi Ciudad Verde
-      </Text>
+      <Text style={{ fontSize: 16, fontWeight: '800', color: colors.text }}>Mi Ciudad Verde</Text>
       {display ? (
-        <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>
-          {display}
-        </Text>
+        <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>{display}</Text>
       ) : null}
     </View>
   );
 }
 
-
-function RootNavigator() {
-  const [initializing, setInitializing] = useState(true);
-  const [user, setUser] = useState(null);
-
-  // Escucha de Auth
-  useEffect(() => {
-    const unsubscribe = subscribeToAuth((u) => {
-      setUser(u ?? null);
-      if (initializing) setInitializing(false);
-    });
-    return unsubscribe;
-  }, [initializing]);
-
-  if (initializing) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
-    );
-  }
+/* ---------- Root Navigator ---------- */
+function RootNavigator({ user }) {
+  // Ya no hay spinner aquí; App.js muestra el ActivityIndicator mientras se inicializa
+  const role = user?.role ? String(user.role).trim().toLowerCase() : 'user';
 
   return (
     <Stack.Navigator>
       {!user ? (
+        // -------- NO LOGUEADO --------
+        <>
+          <Stack.Screen name="AuthLogin" component={AuthLoginScreen} options={{ headerShown: false }} />
+          <Stack.Screen name="AuthRegister" component={AuthRegisterScreen} options={{ headerShown: false }} />
+        </>
+      ) : role === 'admin' ? (
+        // -------- ADMIN --------
         <>
           <Stack.Screen
-            name="AuthLogin"
-            component={AuthLoginScreen}
-            options={{ title: 'Iniciar sesión', headerShown: false }}
+            name="AdminPanel"
+            component={AdminPanelScreen}
+            options={{
+              headerTitle: () => <HeaderTitleWithUser user={user} />,
+              headerRight: () => (
+                <TouchableOpacity onPress={logout} style={{ paddingHorizontal: 8 }}>
+                  <Text style={{ color: colors.primary, fontWeight: '600' }}>Cerrar sesión</Text>
+                </TouchableOpacity>
+              ),
+            }}
           />
-          <Stack.Screen
-            name="AuthRegister"
-            component={AuthRegisterScreen}
-            options={{ title: 'Crear cuenta', headerShown: false }}
-          />
+          <Stack.Screen name="ReportDetail" component={ReportDetailScreen} options={{ title: 'Detalle del reporte' }} />
         </>
       ) : (
+        // -------- USER NORMAL --------
         <>
           <Stack.Screen
             name="Main"
@@ -115,39 +106,21 @@ function RootNavigator() {
             options={{
               headerTitle: () => <HeaderTitleWithUser user={user} />,
               headerRight: () => (
-                <TouchableOpacity
-                  onPress={async () => {
-                    try {
-                      await logout();
-                    } catch (err) {
-                      console.error('[LOGOUT ERROR]', err);
-                    }
-                  }}
-                  style={{ paddingHorizontal: 8 }}
-                >
-                  <Text style={{ color: colors.primary, fontWeight: '600' }}>
-                    Cerrar sesión
-                  </Text>
+                <TouchableOpacity onPress={logout} style={{ paddingHorizontal: 8 }}>
+                  <Text style={{ color: colors.primary, fontWeight: '600' }}>Cerrar sesión</Text>
                 </TouchableOpacity>
               ),
             }}
           />
-          <Stack.Screen
-            name="ReportDetail"
-            component={ReportDetailScreen}
-            options={{ title: 'Detalle del reporte' }}
-          />
-          <Stack.Screen
-            name="Report"
-            component={ReportScreen}
-            options={{ title: 'Nuevo reporte' }}
-          />
+          <Stack.Screen name="ReportDetail" component={ReportDetailScreen} options={{ title: 'Detalle del reporte' }} />
+          <Stack.Screen name="Report" component={ReportScreen} options={{ title: 'Nuevo reporte' }} />
         </>
       )}
     </Stack.Navigator>
   );
 }
 
-export default function AppNavigator() {
-  return <RootNavigator />;
+export default function AppNavigator({ user }) {
+  // 👈 Exporta SOLO el árbol de navegadores (App.js ya tiene NavigationContainer)
+  return <RootNavigator user={user} />;
 }
