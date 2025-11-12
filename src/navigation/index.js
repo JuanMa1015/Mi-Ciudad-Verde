@@ -1,6 +1,7 @@
 // src/navigation/index.js
 import React, { useEffect, useMemo, useState } from 'react';
 import { TouchableOpacity, Text, ActivityIndicator, View } from 'react-native';
+import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,8 +12,9 @@ import ReportScreen from '../views/ReportScreen';
 import ReportDetailScreen from '../views/ReportDetailScreen';
 import AuthLoginScreen from '../views/AuthLoginScreen';
 import AuthRegisterScreen from '../views/AuthRegisterScreen';
-import AdminPanelScreen from '../views/AdminPanelScreen';   // Reportes
-import AdminUsersScreen from '../views/AdminUsersScreen';   // Usuarios (nuevo)
+import AdminPanelScreen from '../views/AdminPanelScreen';   
+import AdminUsersScreen from '../views/AdminUsersScreen';  
+import LandingScreen from '../views/LandingScreen';
 
 import colors from '../theme/colors';
 import { subscribeToAuth, logout } from '../services/authService';
@@ -122,13 +124,13 @@ function RootNavigator() {
   return (
     <Stack.Navigator>
       {!user ? (
-        // -------- NO LOGUEADO --------
         <>
+          <Stack.Screen name="Landing" component={LandingScreen} options={{ headerShown: false }} />
           <Stack.Screen name="AuthLogin" component={AuthLoginScreen} options={{ headerShown: false }} />
           <Stack.Screen name="AuthRegister" component={AuthRegisterScreen} options={{ headerShown: false }} />
+          
         </>
       ) : role === 'admin' ? (
-        // -------- ADMIN --------
         <>
           <Stack.Screen
             name="AdminTabs"
@@ -145,7 +147,6 @@ function RootNavigator() {
           <Stack.Screen name="ReportDetail" component={ReportDetailScreen} options={{ title: 'Detalle del reporte' }} />
         </>
       ) : (
-        // -------- USER NORMAL --------
         <>
           <Stack.Screen
             name="Main"
@@ -167,6 +168,11 @@ function RootNavigator() {
   );
 }
 
+/* ---------- Export raíz envuelta en NavigationContainer ---------- */
 export default function AppNavigator() {
-  return <RootNavigator />;
+  return (
+    <NavigationContainer>
+      <RootNavigator />
+    </NavigationContainer>
+  );
 }

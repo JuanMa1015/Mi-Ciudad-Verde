@@ -10,7 +10,6 @@ import {
   Modal,
   Alert,
   ActivityIndicator,
-  Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import colors from '../theme/colors';
@@ -21,12 +20,12 @@ import {
   deleteUserDoc,
 } from '../services/firestoreService';
 import { currentUser } from '../services/authService';
-import * as FileSystem from 'expo-file-system/legacy'; // ✅ usar API legacy para compatibilidad
+import { makeStyledTable, saveAndShareXls } from '../utils/styledExport';
 
 const ROLES = ['admin', 'user'];
 const ROLE_COLORS = {
   admin: { bg: '#FEE2E2', text: '#991B1B' },
-  user:  { bg: '#E0F2FE', text: '#055382' },
+  user: { bg: '#E0F2FE', text: '#055382' },
 };
 
 export default function AdminUsersScreen() {
@@ -66,9 +65,11 @@ export default function AdminUsersScreen() {
     return () => unsub && unsub();
   }, []);
 
-  // helpers
   function countAdmins(list) {
-    return list.reduce((acc, u) => acc + (String(u.role || 'user').toLowerCase() === 'admin' ? 1 : 0), 0);
+    return list.reduce(
+      (acc, u) => acc + (String(u.role || 'user').toLowerCase() === 'admin' ? 1 : 0),
+      0
+    );
   }
 
   const filtered = useMemo(() => {
@@ -177,53 +178,29 @@ export default function AdminUsersScreen() {
     }
   }
 
-  // ===== CSV helpers (usuarios) =====
-  function csvEscape(val) {
-    if (val == null) return '';
-    const s = String(val);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  }
-  function usersToCsv(data) {
-    const header = ['uid', 'email', 'displayName', 'role'];
-    const lines = [header.join(',')];
-    for (const u of data) {
-      lines.push([
-        csvEscape(u.id),
-        csvEscape(u.email || ''),
-        csvEscape(u.displayName || ''),
-        csvEscape(String(u.role || 'user')),
-      ].join(','));
-    }
-    return '\uFEFF' + lines.join('\n'); // BOM UTF-8 para Excel
-  }
-  async function exportUsersCsv(list) {
-    try {
-      const data = list && list.length ? list : filtered;
-      if (!data.length) return Alert.alert('Exportar', 'No hay usuarios para exportar.');
-      const csv = usersToCsv(data);
-      const fileUri = FileSystem.documentDirectory + `usuarios_${Date.now()}.csv`;
-      await FileSystem.writeAsStringAsync(fileUri, csv, { encoding: 'utf8' });
+  // -------- Exportador bonito (.xls con estilos)
+  async function exportUsersPretty(list) {
+    if (!list?.length) return Alert.alert('Exportar', 'No hay usuarios para exportar.');
 
-      // Intento con expo-sharing si existe; si no, Share nativo
-      let shared = false;
-      try {
-        const Sharing = await import('expo-sharing');
-        if (await Sharing.isAvailableAsync()) {
-          await Sharing.shareAsync(fileUri, { mimeType: 'text/csv', dialogTitle: 'Exportar usuarios' });
-          shared = true;
-        }
-      } catch (_) {}
-      if (!shared) {
-        await Share.share({
-          url: fileUri,
-          message: 'Exportación de usuarios',
-          title: 'Exportar usuarios',
-        });
-      }
-    } catch (e) {
-      console.error(e);
-      Alert.alert('Error', 'No fue posible exportar el CSV.');
-    }
+    const headers = ['UID', 'Email', 'Nombre', 'Rol'];
+    const rows2D = list.map((u) => [
+      u.id || '',
+      u.email || '',
+      u.displayName || '',
+      String(u.role || 'user'),
+    ]);
+
+    const html = makeStyledTable({
+      title: 'Usuarios - Mi Ciudad Verde',
+      headers,
+      rows: rows2D,
+      palette: { brand: '#16A34A', brandDark: '#0F7A37', rowAlt: '#F3FFF4' },
+    });
+
+    const uri = await saveAndShareXls({ html, baseFilename: 'usuarios' });
+    // Si el share no está disponible, saveAndShareXls ya devolvió la ruta
+    // y en iOS/Android modernos suele abrir el diálogo de compartir.
+    if (!uri) { /* noop */ }
   }
 
   if (loading) {
@@ -263,8 +240,8 @@ export default function AdminUsersScreen() {
             <Text style={{ color: '#fff', fontWeight: '800', marginLeft: 6 }}>Nuevo</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.btnPrimary, { backgroundColor: '#10b981' }]}
-            onPress={() => exportUsersCsv(filtered)}
+            style={[styles.btnPrimary, { backgroundColor: '#16a34a' }]}
+            onPress={() => exportUsersPretty(filtered)}
           >
             <Ionicons name="download" size={18} color="#fff" />
             <Text style={{ color: '#fff', fontWeight: '800', marginLeft: 6 }}>Exportar</Text>
@@ -339,10 +316,12 @@ export default function AdminUsersScreen() {
               placeholder="p.ej. uid de Firebase Auth"
               style={[
                 styles.input,
-                editingUser && { backgroundColor: '#f3f4f6', color: '#6B7280' },
+                editingUser && { backgroundColor: '#f3f4f6', color: '#374151' },
               ]}
               autoCapitalize="none"
               placeholderTextColor="#9CA3AF"
+              autoComplete="off"
+              importantForAutofill="no"
             />
 
             <Text style={[styles.label, { marginTop: 12 }]}>Email</Text>
@@ -354,6 +333,8 @@ export default function AdminUsersScreen() {
               keyboardType="email-address"
               style={styles.input}
               placeholderTextColor="#9CA3AF"
+              autoComplete="off"
+              importantForAutofill="no"
             />
 
             <Text style={[styles.label, { marginTop: 12 }]}>Nombre</Text>
@@ -363,6 +344,9 @@ export default function AdminUsersScreen() {
               placeholder="Nombre para mostrar"
               style={styles.input}
               placeholderTextColor="#9CA3AF"
+              autoComplete="off"
+              importantForAutofill="no"
+
             />
 
             <Text style={[styles.label, { marginTop: 12 }]}>Rol</Text>
@@ -468,7 +452,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingVertical: 10,
     paddingHorizontal: 12,
-    backgroundColor: '#fff',
+    backgroundColor: '#ffffff',
     color: '#111827',
   },
   btnPrimary: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, backgroundColor: colors.primary },

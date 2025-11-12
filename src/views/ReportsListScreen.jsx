@@ -12,113 +12,120 @@ import {
   Alert,
 } from 'react-native';
 import colors from '../theme/colors';
-import useReportsListViewModel from '../viewmodels/useReportsListViewModel'; // solo mis reportes (where userId==uid)
-import useMapViewModel from '../viewmodels/useMapViewModel'; // todos los reportes
+import useMapViewModel from '../viewmodels/useMapViewModel'; // fuente única: todos los reportes
 import { deleteIncidentDoc } from '../services/firestoreService';
 import { currentUser } from '../services/authService';
 
 export default function ReportsListScreen({ navigation }) {
+  // Toggle de filtro
   const [showMine, setShowMine] = useState(true);
-  const myVM = useReportsListViewModel();
-  const publicVM = useMapViewModel();
 
-  const user = currentUser();
-  const uid = user?.uid ?? null;
-  const email = user?.email ?? null;
+  // VM única (todos los reportes)
+  const { incidents: allIncidents, loading, error } = useMapViewModel();
 
-  // Fallback: si "Mis reportes" está vacío (p.ej. reportes viejos sin userId),
-  // filtramos localmente los públicos por userId==uid o userEmail==email.
-  const mineWithFallback = useMemo(() => {
-    if (!uid && !email) return myVM.incidents;
-    if (myVM.incidents.length > 0) return myVM.incidents;
+  // Usuario actual
+  const me = currentUser();
+  const uid = me?.uid ?? null;
+  const email = me?.email?.toLowerCase?.() ?? null;
 
-    const filtered = publicVM.incidents.filter((it) => {
-      return (it.userId && it.userId === uid) || (it.userEmail && it.userEmail === email);
+  // Filtrar en memoria cuando "Mis reportes" está ON
+  const filteredIncidents = useMemo(() => {
+    if (!showMine) return allIncidents;
+
+    if (!uid && !email) return []; // sin identidad, no podemos filtrar "míos"
+
+    return (allIncidents || []).filter((it) => {
+      const byUid = it?.userId && it.userId === uid;
+      const byEmail =
+        email &&
+        typeof it?.userEmail === 'string' &&
+        it.userEmail.toLowerCase() === email;
+      return byUid || byEmail;
     });
-    return filtered;
-  }, [myVM.incidents, publicVM.incidents, uid, email]);
+  }, [showMine, allIncidents, uid, email]);
 
-  const loading = showMine ? (myVM.loading || publicVM.loading) : publicVM.loading;
-  const incidents = showMine ? mineWithFallback : publicVM.incidents;
-
-  const handleDelete = (id) => {
-    Alert.alert(
-      'Eliminar reporte',
-      '¿Seguro que quieres eliminar este reporte?',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Eliminar',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await deleteIncidentDoc(id);
-            } catch (err) {
-              Alert.alert('Error', 'No fue posible eliminar el reporte.');
-            }
-          },
+  // Eliminar
+  const handleDelete = (item) => {
+    Alert.alert('Eliminar reporte', '¿Seguro que quieres eliminar este reporte?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Eliminar',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteIncidentDoc(item.id);
+          } catch (err) {
+            console.error(err);
+            Alert.alert('Error', 'No fue posible eliminar el reporte.');
+          }
         },
-      ]
-    );
+      },
+    ]);
   };
 
-  // Función auxiliar para formatear fecha
+  // Fecha segura
   const formatDate = (createdAt) => {
+    // soporta number (ms), Timestamp.toMillis(), o nada
     const ms =
       typeof createdAt === 'number'
         ? createdAt
-        : createdAt?.toMillis?.() ?? null;
+        : createdAt?.toMillis?.() ?? (createdAt?.seconds ? createdAt.seconds * 1000 : null);
     return ms ? new Date(ms).toLocaleString() : '';
   };
 
-  // Función para mostrar autor
+  // Autor (texto)
   const renderAuthor = (item) => {
     const authorEmail = item?.userEmail || '';
     const authorName = item?.userName || (authorEmail ? authorEmail.split('@')[0] : null);
     if (!authorEmail && !authorName) return null;
 
-    const isMine = email && authorEmail && authorEmail.toLowerCase() === email.toLowerCase();
+    const isMine =
+      !!email &&
+      typeof authorEmail === 'string' &&
+      authorEmail.toLowerCase() === email;
 
-    return (
-      <Text style={styles.author}>
-        📍 {isMine ? 'Reportado por ti' : `Reportado por ${authorName}`}
-      </Text>
-    );
+    return <Text style={styles.author}>{isMine ? '📍 Reportado por ti' : `📍 Reportado por ${authorName}`}</Text>;
   };
 
   if (loading) {
     return (
       <View style={styles.center}>
         <ActivityIndicator />
-        <Text style={{ color: colors.muted, marginTop: 8 }}>
-          Cargando reportes...
-        </Text>
+        <Text style={{ color: colors.muted, marginTop: 8 }}>Cargando reportes...</Text>
       </View>
     );
   }
 
+  if (error) {
+    return (
+      <View style={styles.center}>
+        <Text style={{ color: '#DC2626' }}>No fue posible cargar reportes.</Text>
+      </View>
+    );
+  }
+
+  const data = filteredIncidents || [];
+
   return (
     <View style={{ flex: 1 }}>
-      {/* Header con filtro */}
+      {/* Header + toggle */}
       <View style={styles.header}>
         <Text style={styles.title}>Reportes</Text>
 
         <View style={styles.switchContainer}>
-          <Text style={styles.switchLabel}>
-            {showMine ? 'Mis reportes' : 'Todos'}
-          </Text>
+          <Text style={styles.switchLabel}>{showMine ? 'Mis reportes' : 'Todos'}</Text>
           <Switch
             value={showMine}
             onValueChange={setShowMine}
             thumbColor={showMine ? colors.primary : '#ccc'}
-            trackColor={{ true: colors.primary + '55', false: '#e5e7eb' }}
+            trackColor={{ true: `${colors.primary}55`, false: '#e5e7eb' }}
           />
         </View>
       </View>
 
-      {/* Aviso si no hay resultados en "Mis reportes" pero sí existen públicos */}
-      {showMine && mineWithFallback.length === 0 && publicVM.incidents.length > 0 ? (
-        <View style={[styles.banner]}>
+      {/* Aviso cuando no hay "míos" pero sí existen públicos */}
+      {showMine && data.length === 0 && (allIncidents?.length || 0) > 0 ? (
+        <View style={styles.banner}>
           <Text style={styles.bannerText}>
             No encontramos reportes tuyos. Cambia a “Todos” para ver los públicos.
           </Text>
@@ -129,26 +136,29 @@ export default function ReportsListScreen({ navigation }) {
       ) : null}
 
       {/* Lista */}
-      {incidents.length === 0 ? (
+      {data.length === 0 ? (
         <View style={styles.center}>
           <Text style={{ color: colors.muted }}>
-            {showMine
-              ? 'Aún no has creado reportes.'
-              : 'No hay reportes registrados.'}
+            {showMine ? 'Aún no has creado reportes.' : 'No hay reportes registrados.'}
           </Text>
         </View>
       ) : (
         <FlatList
           contentContainerStyle={{ padding: 16, backgroundColor: colors.bg }}
-          data={incidents}
+          data={data}
           keyExtractor={(item) => item.id}
           ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
           renderItem={({ item }) => {
-            const canDelete = showMine && item.userId && item.userId === uid;
+            const canDelete =
+              showMine &&
+              ((item?.userId && item.userId === uid) ||
+                (email &&
+                  typeof item?.userEmail === 'string' &&
+                  item.userEmail.toLowerCase() === email));
 
             return (
               <TouchableOpacity
-                onPress={() => navigation.navigate('ReportDetail', { incident: item })}
+                onPress={() => navigation.navigate('ReportDetail', { id: item.id })}
                 activeOpacity={0.85}
               >
                 <View style={styles.card}>
@@ -156,9 +166,7 @@ export default function ReportsListScreen({ navigation }) {
                     <Image source={{ uri: item.photoUrl }} style={styles.photo} />
                   ) : null}
 
-                  <Text style={styles.desc}>
-                    {item.description || 'Sin descripción'}
-                  </Text>
+                  <Text style={styles.desc}>{item.description || 'Sin descripción'}</Text>
 
                   <Text style={styles.coords}>
                     {item.address
@@ -170,14 +178,11 @@ export default function ReportsListScreen({ navigation }) {
 
                   <Text style={styles.date}>{formatDate(item.createdAt)}</Text>
 
-                  {/* Mostrar autor en cualquier vista */}
                   {renderAuthor(item)}
 
                   <View style={styles.actions}>
                     <TouchableOpacity
-                      onPress={() =>
-                        navigation.navigate('ReportDetail', { incident: item })
-                      }
+                      onPress={() => navigation.navigate('ReportDetail', { id: item.id })}
                       style={[styles.btn, { backgroundColor: colors.primary }]}
                     >
                       <Text style={styles.btnText}>Ver</Text>
@@ -185,7 +190,7 @@ export default function ReportsListScreen({ navigation }) {
 
                     {canDelete && (
                       <TouchableOpacity
-                        onPress={() => handleDelete(item.id)}
+                        onPress={() => handleDelete(item)}
                         style={[styles.btn, { backgroundColor: '#DC2626' }]}
                       >
                         <Text style={styles.btnText}>Eliminar</Text>
@@ -200,10 +205,7 @@ export default function ReportsListScreen({ navigation }) {
       )}
 
       {/* FAB crear reporte */}
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => navigation.navigate('Report')}
-      >
+      <TouchableOpacity style={styles.fab} onPress={() => navigation.navigate('Report')}>
         <Text style={styles.fabText}>+ Reporte</Text>
       </TouchableOpacity>
     </View>

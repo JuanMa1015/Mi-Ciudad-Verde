@@ -11,13 +11,9 @@ import {
   ActivityIndicator,
   TextInput,
   ScrollView,
-  Share, // fallback si no hay expo-sharing
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import colors from '../theme/colors';
-import * as FileSystem from 'expo-file-system/legacy'; // ✅ API legacy (evita deprecation crash)
-// import * as Sharing from 'expo-sharing'; // ❌ no lo importamos fijo; lo cargamos dinámico
-
 import {
   subscribeIncidents,
   updateIncidentDoc,
@@ -28,7 +24,7 @@ import {
   getCategoriesWithSubs,
 } from '../services/firestoreService';
 import { currentUser } from '../services/authService';
-
+import { makeStyledTable, saveAndShareXls, formatDateExport } from '../utils/styledExport';
 /* ========= Sugerencias por categoría → departamentos ========= */
 const CATEGORY_DEPTS = {
   'Basura y residuos': ['aseo_emvarias'],
@@ -139,61 +135,30 @@ export default function AdminPanelScreen() {
     return n === 1 ? '1 reporte encontrado' : `${n} reportes encontrados`;
   }, [filteredRows]);
 
-  /* =============== Exportar CSV (dentro del componente) =============== */
-  function csvEscape(val) {
-    if (val == null) return '';
-    const s = String(val);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  }
-  function incidentsToCsv(data) {
-    const header = ['id','createdAt','status','category','subcategory','address','userEmail','assignedDept','assignedUnit'];
-    const lines = [header.join(',')];
-    for (const it of data) {
-      const created = it.createdAt?.toDate
-        ? it.createdAt.toDate().toISOString()
-        : (it.createdAt || '');
-      lines.push([
-        csvEscape(it.id),
-        csvEscape(created),
-        csvEscape(String(it.status || '')),
-        csvEscape(it.category || ''),
-        csvEscape(it.subcategory || ''),
-        csvEscape(it.address || ''),
-        csvEscape(it.userEmail || ''),
-        csvEscape(it.assignedDept || ''),
-        csvEscape(it.assignedUnit || ''),
-      ].join(','));
-    }
-    return '\uFEFF' + lines.join('\n'); // BOM UTF-8 para Excel
-  }
-  async function exportIncidentsCsv(list) {
-    try {
-      const data = list && list.length ? list : filteredRows;
-      if (!data.length) return Alert.alert('Exportar', 'No hay reportes para exportar.');
-      const csv = incidentsToCsv(data);
-      const fileUri = FileSystem.documentDirectory + `reportes_${Date.now()}.csv`;
-      await FileSystem.writeAsStringAsync(fileUri, csv, { encoding: 'utf8' });
+  // ------- Exportador bonito (.xls con estilos)
+  async function exportIncidentsPretty(list) {
+    if (!list?.length) return Alert.alert('Exportar', 'No hay reportes para exportar.');
+    const headers = ['ID', 'Fecha', 'Estado', 'Categoría', 'Subcategoría', 'Dirección', 'Autor', 'Departamento', 'Unidad'];
+    const rows2D = list.map(it => [
+      it.id || '',
+      formatDateExport(it.createdAt),
+      String(it.status || ''),
+      it.category || '',
+      it.subcategory || '',
+      it.address || '',
+      it.userEmail || it.userId || '',
+      it.assignedDept || '',
+      it.assignedUnit || '',
+    ]);
 
-      // Intento con expo-sharing si existe; si no, Share nativo
-      let shared = false;
-      try {
-        const Sharing = await import('expo-sharing');
-        if (await Sharing.isAvailableAsync()) {
-          await Sharing.shareAsync(fileUri, { mimeType: 'text/csv', dialogTitle: 'Exportar reportes' });
-          shared = true;
-        }
-      } catch (_) {}
-      if (!shared) {
-        await Share.share({
-          url: fileUri,
-          message: 'Exportación de reportes',
-          title: 'Exportar reportes',
-        });
-      }
-    } catch (e) {
-      console.error(e);
-      Alert.alert('Error', 'No fue posible exportar el CSV.');
-    }
+    const html = makeStyledTable({
+      title: 'Reportes - Mi Ciudad Verde',
+      headers,
+      rows: rows2D,
+      palette: { brand: '#16A34A', brandDark: '#0F7A37', rowAlt: '#F3FFF4' },
+    });
+
+    await saveAndShareXls({ html, baseFilename: 'reportes' });
   }
 
   /* =============== EDITAR TODO =============== */
@@ -344,7 +309,7 @@ export default function AdminPanelScreen() {
   if (error) {
     return (
       <View style={styles.center}>
-        <Text style={{ color: colors.danger || '#ef4444' }}>{error}</Text>
+        <Text style={{ color: colors.danger }}>{error}</Text>
       </View>
     );
   }
@@ -353,9 +318,20 @@ export default function AdminPanelScreen() {
     <View style={{ flex: 1, backgroundColor: '#F3FFF4' }}>
       {/* Header */}
       <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8 }}>
-        <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text, marginBottom: 6 }}>
-          Panel de administración
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text, marginBottom: 6, flex: 1 }}>
+            Panel de administración
+          </Text>
+
+          {/* Exportar bonito */}
+          <TouchableOpacity
+            style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#16a34a', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12 }}
+            onPress={() => exportIncidentsPretty(filteredRows)}
+          >
+            <Ionicons name="download" size={18} color="#fff" />
+            <Text style={{ color: '#fff', fontWeight: '800', marginLeft: 6 }}>Exportar</Text>
+          </TouchableOpacity>
+        </View>
 
         {/* Filtro por estado */}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -381,17 +357,7 @@ export default function AdminPanelScreen() {
           })}
         </View>
 
-        {/* contador + Exportar */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
-          <Text style={{ color: '#6B7280' }}>{countText}</Text>
-          <TouchableOpacity
-            style={{ flexDirection:'row', alignItems:'center', backgroundColor:'#10b981', paddingVertical:10, paddingHorizontal:12, borderRadius:12 }}
-            onPress={() => exportIncidentsCsv(filteredRows)}
-          >
-            <Ionicons name="download" size={18} color="#fff" />
-            <Text style={{ color:'#fff', fontWeight:'800', marginLeft:6 }}>Exportar</Text>
-          </TouchableOpacity>
-        </View>
+        <Text style={{ color: '#6B7280', marginTop: 4 }}>{countText}</Text>
       </View>
 
       {/* Lista */}
@@ -432,7 +398,7 @@ export default function AdminPanelScreen() {
                 onPress={() => !catLoading && setShowCatPicker(true)}
               />
 
-              {/* Subcategoría (picker dependiente) */}
+              {/* Subcategoría */}
               <Text style={[styles.label, { marginTop: 12 }]}>Subcategoría</Text>
               <SelectField
                 valueLabel={
@@ -482,7 +448,7 @@ export default function AdminPanelScreen() {
         </View>
       </Modal>
 
-      {/* ===== Modal: Asignar (estado + dept/unidad) ===== */}
+      {/* ===== Modal: Asignar ===== */}
       <Modal visible={showAssign} transparent animationType="slide" onRequestClose={() => setShowAssign(false)}>
         <View style={styles.backdrop}>
           <View style={styles.sheet}>
@@ -750,9 +716,9 @@ const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
   sheet: { backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '90%' },
   listSheet: { backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '70%' },
-  label: { fontWeight: '700', fontSize: 14, marginBottom: 8 },
+  label: { fontWeight: '700', fontSize: 14, marginBottom: 8, color: colors.text },
   chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: '#e5e7eb' },
-  input: { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, backgroundColor: '#fff', color:'#111827' },
+  input: { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, backgroundColor: '#fff', color: '#111827' },
   btnGhost: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 12, borderRadius: 12, backgroundColor: '#f3f4f6' },
   btnPrimary: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 12, borderRadius: 12, backgroundColor: '#16a34a' },
 });
